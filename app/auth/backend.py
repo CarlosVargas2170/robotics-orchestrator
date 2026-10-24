@@ -15,9 +15,16 @@ from app.core.config import get_settings
 
 _MAX_CACHED = 1000
 
+# Roles de robotics-backend que usan el reconocimiento de video. `operator` es del control de robots.
+PRODUCT_ROLES = frozenset({"admin", "cliente"})
+
 
 class AuthError(Exception):
     """Token ausente, invalido, vencido o de un usuario desactivado."""
+
+
+class RoleNotAllowed(Exception):
+    """Usuario valido, pero su rol no usa este producto (p. ej. un `operator`, que maneja el control de robots)."""
 
 
 class BackendUnavailable(Exception):
@@ -43,6 +50,12 @@ class BackendAuthClient:
         self._cache: dict[str, tuple[float, CurrentUser]] = {}
 
     async def authenticate(self, token: str) -> CurrentUser:
+        user = await self._resolve(token)
+        if user.role not in PRODUCT_ROLES:  # tambien con el usuario en cache: el rol se comprueba siempre
+            raise RoleNotAllowed(user.role)
+        return user
+
+    async def _resolve(self, token: str) -> CurrentUser:
         key = hashlib.sha256(token.encode()).hexdigest()  # el token en claro no se conserva
         now = time.monotonic()
         hit = self._cache.get(key)

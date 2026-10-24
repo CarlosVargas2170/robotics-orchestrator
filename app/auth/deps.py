@@ -1,7 +1,7 @@
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.auth.backend import AuthError, BackendUnavailable, CurrentUser, get_auth_client
+from app.auth.backend import AuthError, BackendUnavailable, CurrentUser, RoleNotAllowed, get_auth_client
 
 bearer_scheme = HTTPBearer(
     scheme_name="AccessToken",
@@ -20,6 +20,8 @@ async def get_current_user(
         return await get_auth_client().authenticate(credentials.credentials)
     except AuthError:
         raise HTTPException(401, "Token invalido", headers={"WWW-Authenticate": "Bearer"}) from None
+    except RoleNotAllowed:
+        raise HTTPException(403, "Tu rol no tiene acceso a este producto") from None
     except BackendUnavailable:
         raise HTTPException(503, "Servicio de autenticacion no disponible") from None
 

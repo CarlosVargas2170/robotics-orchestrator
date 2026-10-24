@@ -5,12 +5,13 @@ Usa el Postgres de DATABASE_URL dentro de una transaccion que se revierte.
 import uuid
 from datetime import UTC, datetime
 
+import pytest
 from sqlalchemy import select
 
 from app.auth.access import CameraAccess
 from app.auth.backend import CurrentUser
 from app.db.models import AuditLog, Clip, ClipStatus, Detection, Detector
-from tests.helpers import ADMIN_ID, USER_A, USER_B, bearer, make_camera
+from tests.helpers import ADMIN_ID, BACKEND_USERS, USER_A, USER_B, bearer, make_camera
 
 
 async def names(api, path: str, token: str) -> set[str]:
@@ -111,7 +112,7 @@ async def test_websocket_access_follows_camera_ownership():
         lookups.append(camera_id)
         return owners.get(camera_id)
 
-    ana = CameraAccess(CurrentUser(USER_A, "ana", "operator"), owner_of)
+    ana = CameraAccess(CurrentUser(USER_A, "ana", "cliente"), owner_of)
     assert await ana.allows(str(cam_a)) is True
     assert await ana.allows(str(cam_b)) is False
     assert await ana.allows(str(uuid.uuid4())) is False  # camara desconocida
@@ -121,3 +122,54 @@ async def test_websocket_access_follows_camera_ownership():
     admin = CameraAccess(CurrentUser(ADMIN_ID, "admin", "admin"), owner_of)
     assert await admin.allows(str(cam_b)) is True
     assert len(lookups) == 3  # el admin no consulta
+
+
+# --- Roles: el reconocimiento de video es de admin y cliente; el operator es del control de robots -------------
+
+
+@pytest.mark.parametrize("path", ["/cameras", "/clips", "/detections", "/alerts", "/detectors/available", "/detectors"])
+async def test_an_operator_is_refused_where_a_cliente_gets_in(api, path):
+    refused = await api.get(path, headers=bearer("tok-op"))
+
+    assert refused.status_code == 403
+    assert refused.json()["detail"] == "Tu rol no tiene acceso a este producto"
+
+
+async def test_the_role_is_checked_on_every_request_even_with_the_token_cached(api):
+    for _ in range(3):
+        assert (await api.get("/cameras", headers=bearer("tok-op"))).status_code == 403
+    assert api.state["calls"] == 1  # el backend se consulto una sola vez: la negativa tambien sale de la cache
+
+    assert (await api.get("/cameras", headers=bearer("tok-a"))).status_code == 200  # cliente
+    assert (await api.get("/cameras", headers=bearer("tok-admin"))).status_code == 200
+
+
+async def test_an_operator_cannot_act_on_anything(api, session):
+    camera = await make_camera(session, USER_A, "ana")
+
+    body = {"camera_id": str(camera.id), "started_at": "2026-01-01T00:00:00Z", "duration_s": 10}
+    assert (await api.post("/clips", json=body, headers=bearer("tok-op"))).status_code == 403
+    assert (await api.post(f"/alerts/{uuid.uuid4()}/acknowledge", headers=bearer("tok-op"))).status_code == 403
+    activate = f"/cameras/{camera.id}/detectors/{uuid.uuid4()}"
+    assert (await api.put(activate, headers=bearer("tok-op"))).status_code == 403
+    assert (await api.get("/health")).status_code == 200  # el health check sigue publico
+
+
+async def test_the_auth_client_only_lets_product_roles_through():
+    import httpx
+    import respx
+
+    from app.auth.backend import BackendAuthClient, RoleNotAllowed
+
+    with respx.mock() as mock:
+        mock.get("http://backend.test/api/auth/me").mock(side_effect=lambda r: httpx.Response(
+            200, json=BACKEND_USERS[r.headers["authorization"].removeprefix("Bearer ")]))
+        client = BackendAuthClient("http://backend.test", ttl_s=45)
+
+        assert (await client.authenticate("tok-a")).role == "cliente"
+        assert (await client.authenticate("tok-admin")).role == "admin"
+        with pytest.raises(RoleNotAllowed):
+            await client.authenticate("tok-op")
+        with pytest.raises(RoleNotAllowed):
+            await client.authenticate("tok-op")  # cacheado: igual se rechaza
+        await client.aclose()

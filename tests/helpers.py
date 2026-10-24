@@ -3,11 +3,13 @@ from datetime import UTC, datetime
 
 from app.db.models import Camera, Clip, ClipStatus
 
-ADMIN_ID, USER_A, USER_B = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+ADMIN_ID, USER_A, USER_B, OPERATOR_ID = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 BACKEND_USERS = {
     "tok-admin": {"id": str(ADMIN_ID), "login": "admin", "role": "admin", "active": True},
-    "tok-a": {"id": str(USER_A), "login": "ana", "role": "operator", "active": True},
-    "tok-b": {"id": str(USER_B), "login": "beto", "role": "operator", "active": True},
+    "tok-a": {"id": str(USER_A), "login": "ana", "role": "cliente", "active": True},
+    "tok-b": {"id": str(USER_B), "login": "beto", "role": "cliente", "active": True},
+    # Maneja el control de robots (otro producto): no debe entrar al reconocimiento de video
+    "tok-op": {"id": str(OPERATOR_ID), "login": "olga", "role": "operator", "active": True},
 }
 
 
