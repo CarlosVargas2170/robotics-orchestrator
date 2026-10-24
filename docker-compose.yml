@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: orchestrator
+      POSTGRES_PASSWORD: orchestrator
+      POSTGRES_DB: orchestrator
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestrator"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orchestrator:orchestrator@db:5432/orchestrator
+      REDIS_URL: redis://redis:6379/0
+      CLIPS_DIR: /data/clips
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports: ["8000:8000"]
+    volumes: [clips:/data/clips]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orchestrator:orchestrator@db:5432/orchestrator
+      REDIS_URL: redis://redis:6379/0
+      CLIPS_DIR: /data/clips
+    command: arq app.workers.tasks.WorkerSettings
+    volumes: [clips:/data/clips]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+
+volumes:
+  pgdata:
+  clips:
