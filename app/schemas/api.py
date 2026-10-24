@@ -211,6 +211,8 @@ class AlertOut(BaseModel):
     acknowledged_at: datetime | None
     acknowledged_by: uuid.UUID | None
     note: str | None
+    # El video del clip sigue guardado (se conserva como evidencia hasta la limpieza periodica)
+    video_available: bool = False
 
 
 class AcknowledgeIn(BaseModel):

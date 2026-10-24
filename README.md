@@ -179,7 +179,8 @@ pantalla más tarde ve lo que sigue pendiente, aunque no estuviera conectado cua
 | Endpoint | Para qué |
 |---|---|
 | `GET /alerts` | Alertas de tus cámaras (el admin ve todas), de la más reciente a la más antigua. Filtros: `acknowledged` (`false` = pendientes), `camera_id`, `alert`, `since`, `until`, `limit` (máx. 200), `offset` |
-| `GET /alerts/{id}` | Una alerta (404 si no es de tus cámaras) |
+| `GET /alerts/{id}` | Una alerta (404 si no es de tus cámaras). Trae `video_available`: si el video del clip sigue guardado |
+| `GET /alerts/{id}/video` | El MP4 del clip donde se confirmó la alerta (admite `Range`, para saltar dentro del video). `first_offset_s` y `offset_s` de la alerta son segundos dentro de este video. 404 si no es de tus cámaras o si ya no está guardado (se conserva `CLIP_RETENTION_DAYS`, 30 por defecto). Cada descarga queda en la auditoría (`alert.video`). Solo se sirven archivos dentro de `CLIPS_DIR`; la API y el worker deben compartir esa carpeta |
 | `POST /alerts/{id}/acknowledge` | Marca la alerta como atendida, con una nota opcional (máx. 500). Si ya estaba atendida no se sobrescribe quién lo hizo primero |
 
 Cada alerta incluye `robot_code`, el tipo (`alert`), la persona (`track_id`), el instante real en que empezó
@@ -202,7 +203,7 @@ que el navegador la lea). Las fechas sin zona horaria se toman como UTC; `since`
 |---|---|---|
 | `GET /detections` | `since`, `until` (instante real de la detección), `camera_id`, `clip_id`, `detector_id`, `kind` (tipo de servicio: `persons`, `faces`...), `label`, `alert`, `alert_confirmed`, `min_confidence`, `limit` (máx. 500), `offset` | `detector_name`, `detector_kind`, `robot_code`, `camera_id`, `detected_at` (inicio del clip + `offset_s`) |
 | `GET /clips` | `since`, `until` (inicio del clip), `camera_id`, `status` (`done`, `failed`, `no_data`...), `source`, `limit` (máx. 200), `offset` | `robot_code`, estado y error |
-| `GET /alerts` | `acknowledged`, `camera_id`, `alert`, `kind`, `since`, `until`, `limit` (máx. 200), `offset` | `robot_code`, `detector_name`, `detector_kind` |
+| `GET /alerts` | `acknowledged`, `camera_id`, `alert`, `kind`, `since`, `until`, `limit` (máx. 200), `offset` | `robot_code`, `detector_name`, `detector_kind`, `video_available` |
 
 ### Resumen para pantallas y gráficos
 

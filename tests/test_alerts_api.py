@@ -2,9 +2,11 @@
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.db.models import Alert, AuditLog, Clip, Detector
 from tests.helpers import ADMIN_ID, USER_A, USER_B, bearer, make_camera
 
@@ -13,8 +15,11 @@ SOS, FALL = "person_requesting_help_sos", "critical_unresponsive_person_on_groun
 BASE = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
-async def make_alert(session, camera, *, minutes: int = 0, alert: str = SOS, acknowledged: bool = False) -> Alert:
-    clip = Clip(camera_id=camera.id, started_at=BASE + timedelta(minutes=minutes), duration_s=30)
+async def make_alert(
+    session, camera, *, minutes: int = 0, alert: str = SOS, acknowledged: bool = False, video: Path | None = None,
+) -> Alert:
+    clip = Clip(camera_id=camera.id, started_at=BASE + timedelta(minutes=minutes), duration_s=30,
+                path=str(video) if video else None)
     detector = Detector(name=f"p-{uuid.uuid4().hex[:6]}", kind="persons", base_url="http://p:8001")
     session.add_all([clip, detector])
     await session.flush()
@@ -124,3 +129,92 @@ async def test_nobody_acknowledges_someone_elses_alert_and_the_note_has_a_limit(
     assert (await api.get(f"/alerts/{alert.id}", headers=A)).json()["acknowledged_at"] is None
 
     assert (await api.post(f"/alerts/{alert.id}/acknowledge", headers=A)).status_code == 200  # la nota es opcional
+
+
+VIDEO = b"ftypmp42" + bytes(range(256)) * 8  # no es un MP4 real: el endpoint solo entrega el archivo
+
+
+def evidence(monkeypatch, tmp_path, name: str = "clip.mp4") -> Path:
+    """Una carpeta de clips de prueba con un video dentro."""
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    monkeypatch.setenv("CLIPS_DIR", str(clips))
+    get_settings.cache_clear()
+    path = clips / name
+    path.write_bytes(VIDEO)
+    return path
+
+
+async def test_the_alert_says_whether_its_video_is_still_stored(api, session, monkeypatch, tmp_path):
+    camera = await make_camera(session, USER_A, "ana")
+    with_video = await make_alert(session, camera, minutes=0, video=evidence(monkeypatch, tmp_path))
+    without = await make_alert(session, camera, minutes=5)
+
+    listed = {a["id"]: a["video_available"] for a in (await api.get("/alerts", headers=A)).json()}
+
+    assert listed == {str(with_video.id): True, str(without.id): False}
+    assert (await api.get(f"/alerts/{with_video.id}", headers=A)).json()["video_available"] is True
+    acknowledged = await api.post(f"/alerts/{with_video.id}/acknowledge", headers=A)
+    assert acknowledged.json()["video_available"] is True  # atender no cambia el video
+
+
+async def test_the_owner_downloads_the_alert_video_and_nobody_else_does(api, session, monkeypatch, tmp_path):
+    camera = await make_camera(session, USER_A, "ana")
+    alert = await make_alert(session, camera, video=evidence(monkeypatch, tmp_path))
+
+    mine = await api.get(f"/alerts/{alert.id}/video", headers=A)
+    assert mine.status_code == 200
+    assert mine.content == VIDEO and mine.headers["content-type"] == "video/mp4"
+    assert "no-store" in mine.headers["cache-control"]
+    assert (await api.get(f"/alerts/{alert.id}/video", headers=ADMIN)).content == VIDEO
+
+    assert (await api.get(f"/alerts/{alert.id}/video", headers=B)).status_code == 404  # como si no existiera
+    assert (await api.get(f"/alerts/{alert.id}/video")).status_code == 401
+    assert (await api.get(f"/alerts/{alert.id}/video", headers=bearer("tok-op"))).status_code == 403
+    assert (await api.get(f"/alerts/{uuid.uuid4()}/video", headers=A)).status_code == 404
+
+
+async def test_the_player_can_seek_with_range_requests(api, session, monkeypatch, tmp_path):
+    alert = await make_alert(session, await make_camera(session, USER_A, "ana"), video=evidence(monkeypatch, tmp_path))
+
+    part = await api.get(f"/alerts/{alert.id}/video", headers={**A, "Range": "bytes=10-19"})
+
+    assert part.status_code == 206 and part.content == VIDEO[10:20]
+    assert part.headers["content-range"] == f"bytes 10-19/{len(VIDEO)}"
+
+
+async def test_every_view_of_the_video_is_audited_and_denied_ones_are_not(api, session, monkeypatch, tmp_path):
+    alert = await make_alert(session, await make_camera(session, USER_A, "ana"), video=evidence(monkeypatch, tmp_path))
+
+    await api.get(f"/alerts/{alert.id}/video", headers=A)
+    await api.get(f"/alerts/{alert.id}/video", headers=B)  # 404: no es suyo
+
+    rows = (await session.execute(select(AuditLog).where(AuditLog.action == "alert.video"))).scalars().all()
+    assert [(r.actor_id, r.entity_id) for r in rows] == [(str(USER_A), str(alert.id))]
+
+
+async def test_a_video_that_is_gone_answers_with_a_clear_404(api, session, monkeypatch, tmp_path):
+    camera = await make_camera(session, USER_A, "ana")
+    path = evidence(monkeypatch, tmp_path)
+    cleaned = await make_alert(session, camera, minutes=0)  # la limpieza periodica dejo path en None
+    deleted = await make_alert(session, camera, minutes=5, video=path)
+    path.unlink()  # el archivo desaparecio del disco aunque la base aun lo recuerde
+
+    for alert in (cleaned, deleted):
+        resp = await api.get(f"/alerts/{alert.id}/video", headers=A)
+        assert resp.status_code == 404 and "ya no esta disponible" in resp.json()["detail"]
+    rows = (await session.execute(select(AuditLog).where(AuditLog.action == "alert.video"))).scalars().all()
+    assert rows == []
+
+
+async def test_a_path_outside_the_clips_folder_is_never_served(api, session, monkeypatch, tmp_path):
+    evidence(monkeypatch, tmp_path)
+    secret = tmp_path / "secreto.mp4"
+    secret.write_bytes(b"no deberia salir")
+    camera = await make_camera(session, USER_A, "ana")
+    outside = await make_alert(session, camera, minutes=0, video=secret)
+    traversal = await make_alert(session, camera, minutes=5, video=tmp_path / "clips" / ".." / "secreto.mp4")
+
+    for alert in (outside, traversal):
+        resp = await api.get(f"/alerts/{alert.id}/video", headers=A)
+        assert resp.status_code == 404 and b"deberia" not in resp.content
