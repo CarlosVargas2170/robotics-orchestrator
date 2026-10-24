@@ -1,3 +1,5 @@
+import uuid
+
 from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -23,13 +25,13 @@ async def request_clip(
     clip = Clip(**body.model_dump())
     session.add(clip)
     await session.commit()
-    await queue.enqueue_job("process_clip_job", clip.id)
+    await queue.enqueue_job("process_clip_job", str(clip.id))
     return clip
 
 
 @router.get("", response_model=list[ClipOut])
 async def list_clips(
-    camera_id: int | None = None,
+    camera_id: uuid.UUID | None = None,
     limit: int = 50,
     session: AsyncSession = Depends(get_session),
 ):
@@ -40,7 +42,7 @@ async def list_clips(
 
 
 @router.get("/{clip_id}", response_model=ClipOut)
-async def get_clip(clip_id: int, session: AsyncSession = Depends(get_session)):
+async def get_clip(clip_id: uuid.UUID, session: AsyncSession = Depends(get_session)):
     clip = await session.get(Clip, clip_id)
     if clip is None:
         raise HTTPException(404, "Clip no encontrado")

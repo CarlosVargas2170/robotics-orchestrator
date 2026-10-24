@@ -1,8 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -21,13 +22,15 @@ class Settings(BaseSettings):
     clips_dir: Path = Path("./data/clips")
 
     frame_sample_fps: float = 1.0
-    detector_timeout_s: float = 30.0
 
-    detector_objects_url: str = ""
-    detector_faces_url: str = ""
-    detector_animals_url: str = ""
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
 
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, v):
+        if isinstance(v, str):
+            return [o.strip() for o in v.split(",") if o.strip()]
+        return v
 
 
 @lru_cache

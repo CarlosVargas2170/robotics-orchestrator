@@ -1,3 +1,4 @@
+import uuid
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -14,6 +15,9 @@ class DetectionResult(BaseModel):
 
 
 class Detector(Protocol):
+    id: uuid.UUID
     name: str
+    kind: str
+    min_confidence: float
 
     async def detect(self, frame: bytes) -> list[DetectionResult]: ...

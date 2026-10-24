@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,8 +13,8 @@ router = APIRouter(prefix="/detections", tags=["detections"])
 
 @router.get("", response_model=list[DetectionOut])
 async def list_detections(
-    clip_id: int | None = None,
-    detector: str | None = None,
+    clip_id: uuid.UUID | None = None,
+    detector_id: uuid.UUID | None = None,
     label: str | None = None,
     min_confidence: float = 0.0,
     limit: int = 100,
@@ -26,8 +28,8 @@ async def list_detections(
     )
     if clip_id is not None:
         stmt = stmt.where(Detection.clip_id == clip_id)
-    if detector:
-        stmt = stmt.where(Detection.detector == detector)
+    if detector_id is not None:
+        stmt = stmt.where(Detection.detector_id == detector_id)
     if label:
         stmt = stmt.where(Detection.label == label)
     return (await session.execute(stmt)).scalars().all()
