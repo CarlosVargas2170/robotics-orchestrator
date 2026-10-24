@@ -262,3 +262,22 @@ async def test_two_users_with_different_services_get_different_routing(api, sess
     # Si el admin suspende un permiso, deja de enrutarse aunque la camara lo tenga activado
     await grant(api, animals, USER_A, enabled=False)
     assert kinds(await detectors_for_camera(session, cam_a)) == {"faces"}
+
+
+async def test_admin_configures_automatic_ingestion_on_a_camera(api, session):
+    camera = await make_camera(session, USER_A, "ana")
+    cfg = {"auto_ingest": True, "ingest_interval_s": 60, "ingest_duration_s": 15}
+
+    assert (await api.patch(f"/cameras/{camera.id}", json=cfg, headers=A)).status_code == 403
+    resp = await api.patch(f"/cameras/{camera.id}", json=cfg, headers=ADMIN)
+    assert resp.status_code == 200
+    got = resp.json()
+    assert (got["auto_ingest"], got["ingest_interval_s"], got["ingest_duration_s"]) == (True, 60, 15)
+
+    # El intervalo no puede ser menor que la duracion (los tramos se solaparian)
+    assert (await api.patch(f"/cameras/{camera.id}", json={"ingest_interval_s": 10}, headers=ADMIN)).status_code == 422
+    assert (await api.patch(f"/cameras/{camera.id}", json={"ingest_duration_s": 90}, headers=ADMIN)).status_code == 422
+    assert (await api.patch(f"/cameras/{camera.id}", json={"auto_ingest": None}, headers=ADMIN)).status_code == 422
+    body = {"name": "x", "stream_name": "x", "ingest_interval_s": 10, "ingest_duration_s": 30}
+    assert (await api.post("/cameras", json=body, headers=ADMIN)).status_code == 422
+    assert (camera.ingest_interval_s, camera.ingest_duration_s) == (60, 15)  # los rechazos no cambiaron nada

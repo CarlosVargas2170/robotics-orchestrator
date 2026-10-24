@@ -31,12 +31,12 @@ FALLEN = {
 }
 
 
-class FakeRedis:
+class FakeEvents:
     def __init__(self):
-        self.published: list[tuple[str, str]] = []
+        self.published: list[str] = []
 
-    async def publish(self, channel: str, message: str) -> None:
-        self.published.append((channel, message))
+    async def publish(self, message: str) -> None:
+        self.published.append(message)
 
 
 @pytest.fixture
@@ -76,10 +76,10 @@ async def test_clip_flows_from_flussonic_to_stored_detections(session, tmp_path,
     person = respx.post("http://person:8001/api/v1/analyze/frame").mock(return_value=httpx.Response(200, json=FALLEN))
 
     settings = Settings(flussonic_url="http://dvr.test", clips_dir=tmp_path / "clips", frame_sample_fps=1.0)
-    redis, pool = FakeRedis(), DetectorPool()
+    events, pool = FakeEvents(), DetectorPool()
     rows = await detectors_for_camera(session, camera)
     await process_clip(
-        session, clip, settings, FlussonicClient(settings), [pool.get(r) for r in rows], redis
+        session, clip, settings, FlussonicClient(settings), [pool.get(r) for r in rows], events
     )
     await pool.aclose()
 
@@ -91,7 +91,9 @@ async def test_clip_flows_from_flussonic_to_stored_detections(session, tmp_path,
     assert saved[0].raw["incident_evidence"]["filename"] == "evidencia.mp4"
     # Misma persona y misma alerta (conf 0.9) en 3 frames seguidos -> confirmada
     assert all(d.alert_confirmed for d in saved)
-    events = [json.loads(m) for _, m in redis.published]
+    # evidencia conservada
+    assert clip.path and (tmp_path / "clips" / f"clip_{clip.id}.mp4").exists()
+    events = [json.loads(m) for m in events.published]
     assert [e["type"] for e in events].count("detection") == 3
     (confirmed,) = [e for e in events if e["type"] == "alert_confirmed"]
     assert (confirmed["alert"], confirmed["track_id"], confirmed["frames"]) == (
@@ -125,11 +127,13 @@ async def test_failing_service_does_not_break_the_clip(session, tmp_path, video_
     settings = Settings(flussonic_url="http://dvr.test", clips_dir=tmp_path / "clips")
     pool = DetectorPool()
     rows = await detectors_for_camera(session, camera)
-    await process_clip(session, clip, settings, FlussonicClient(settings), [pool.get(r) for r in rows], FakeRedis())
+    await process_clip(session, clip, settings, FlussonicClient(settings), [pool.get(r) for r in rows], FakeEvents())
     await pool.aclose()
 
     assert clip.status == ClipStatus.DONE
     assert (await session.execute(select(Detection).where(Detection.clip_id == clip.id))).first() is None
+    # sin alertas confirmadas, el video se borra
+    assert clip.path is None and not (tmp_path / "clips" / f"clip_{clip.id}.mp4").exists()
 
 
 def _field(multipart: bytes, name: str) -> str:
@@ -159,12 +163,65 @@ async def test_low_confidence_alert_is_stored_but_not_confirmed(session, tmp_pat
     respx.post("http://person:8001/api/v1/analyze/frame").mock(return_value=httpx.Response(200, json=weak))
 
     settings = Settings(flussonic_url="http://dvr.test", clips_dir=tmp_path / "clips")
-    redis, pool = FakeRedis(), DetectorPool()
+    events, pool = FakeEvents(), DetectorPool()
     rows = await detectors_for_camera(session, camera)
-    await process_clip(session, clip, settings, FlussonicClient(settings), [pool.get(r) for r in rows], redis)
+    await process_clip(session, clip, settings, FlussonicClient(settings), [pool.get(r) for r in rows], events)
     await pool.aclose()
 
     saved = (await session.execute(select(Detection).where(Detection.clip_id == clip.id))).scalars().all()
     assert len(saved) == 3 and all(d.alert for d in saved)  # la alerta cruda se conserva
     assert not any(d.alert_confirmed for d in saved)
-    assert "alert_confirmed" not in [json.loads(m)["type"] for _, m in redis.published]
+    assert "alert_confirmed" not in [json.loads(m)["type"] for m in events.published]
+
+
+async def _pending_clip(session, stream: str) -> Clip:
+    camera = Camera(name="Serbot", stream_name=stream)
+    detector = Detector(name=f"p-{uuid.uuid4().hex[:6]}", kind="persons", base_url="http://person:8001",
+                        adapter="person_detection_v1")
+    session.add_all([camera, detector])
+    await session.flush()
+    session.add(CameraDetector(camera_id=camera.id, detector_id=detector.id))
+    clip = Clip(camera_id=camera.id, started_at=datetime(2026, 1, 1, tzinfo=UTC), duration_s=3)
+    session.add(clip)
+    await session.flush()
+    clip.camera = camera
+    return clip
+
+
+@respx.mock
+async def test_window_without_archive_is_no_data_not_a_failure(session, tmp_path):
+    clip = await _pending_clip(session, "SERBOT04")
+    respx.get("http://dvr.test/SERBOT04/archive-1767225600-3.mp4").mock(
+        return_value=httpx.Response(400, text="No DVR configured")
+    )
+    person = respx.post("http://person:8001/api/v1/analyze/frame").mock(return_value=httpx.Response(200, json=FALLEN))
+
+    settings = Settings(flussonic_url="http://dvr.test", clips_dir=tmp_path / "clips")
+    pool, events = DetectorPool(), FakeEvents()
+    rows = await detectors_for_camera(session, clip.camera)
+    await process_clip(session, clip, settings, FlussonicClient(settings), [pool.get(r) for r in rows], events)
+    await pool.aclose()
+
+    assert clip.status == ClipStatus.NO_DATA
+    assert "Sin archivo" in clip.error
+    assert not person.called and events.published == []
+
+
+@respx.mock
+async def test_keep_clips_setting_preserves_every_video(session, tmp_path, video_bytes):
+    clip = await _pending_clip(session, "SERBOT05")
+    respx.get("http://dvr.test/SERBOT05/archive-1767225600-3.mp4").mock(
+        return_value=httpx.Response(200, content=video_bytes)
+    )
+    respx.post("http://person:8001/api/v1/analyze/frame").mock(
+        return_value=httpx.Response(200, json={"detected": False})
+    )
+
+    settings = Settings(flussonic_url="http://dvr.test", clips_dir=tmp_path / "clips", keep_clips=True)
+    pool = DetectorPool()
+    rows = await detectors_for_camera(session, clip.camera)
+    await process_clip(session, clip, settings, FlussonicClient(settings), [pool.get(r) for r in rows], FakeEvents())
+    await pool.aclose()
+
+    assert clip.status == ClipStatus.DONE
+    assert clip.path and (tmp_path / "clips" / f"clip_{clip.id}.mp4").exists()

@@ -4,14 +4,11 @@ import time
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from redis.asyncio import Redis
 
 from app.auth.access import CameraAccess
 from app.auth.backend import AuthError, BackendUnavailable, get_auth_client
-from app.core.config import get_settings
 from app.db.models import Camera
 from app.db.session import SessionLocal
-from app.pipeline.runner import EVENTS_CHANNEL
 
 router = APIRouter(tags=["events"])
 
@@ -47,9 +44,8 @@ async def events(ws: WebSocket):
         return
 
     access = CameraAccess(user, _owner_of)
-    redis = Redis.from_url(get_settings().redis_url)
-    pubsub = redis.pubsub()
-    await pubsub.subscribe(EVENTS_CHANNEL)
+    bus = ws.app.state.events
+    queue = bus.subscribe()
     last_check = time.monotonic()
     try:
         while True:
@@ -57,16 +53,15 @@ async def events(ws: WebSocket):
                 await auth.authenticate(token)
                 access.forget()
                 last_check = time.monotonic()
-            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            if msg is None:
+            try:
+                payload = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except TimeoutError:
                 continue
-            event = json.loads(msg["data"])
-            if await access.allows(event["camera_id"]):
-                await ws.send_text(msg["data"].decode())
+            if await access.allows(json.loads(payload)["camera_id"]):
+                await ws.send_text(payload)
     except (AuthError, BackendUnavailable):
         await ws.close(code=4401)
     except WebSocketDisconnect:
         pass
     finally:
-        await pubsub.unsubscribe(EVENTS_CHANNEL)
-        await redis.aclose()
+        bus.unsubscribe(queue)

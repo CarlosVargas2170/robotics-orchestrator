@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.auth.access import CameraAccess
 from app.auth.backend import CurrentUser
-from app.db.models import AuditLog, Clip, Detection, Detector
+from app.db.models import AuditLog, Clip, ClipStatus, Detection, Detector
 from tests.helpers import ADMIN_ID, USER_A, USER_B, bearer, make_camera
 
 
@@ -66,11 +66,12 @@ async def test_clips_can_only_be_requested_on_own_cameras(api, session):
     resp = await api.post("/clips", json=body, headers=bearer("tok-a"))
     assert resp.status_code == 202
     assert resp.json()["requested_by"] == str(USER_A)
-    assert api.queue.jobs == [("process_clip_job", (resp.json()["id"],))]
+    queued = await session.get(Clip, uuid.UUID(resp.json()["id"]))
+    assert queued.status == ClipStatus.PENDING  # el propio clip es el trabajo en cola
 
     # El otro usuario no puede ni saber que esa camara existe
     assert (await api.post("/clips", json=body, headers=bearer("tok-b"))).status_code == 404
-    assert len(api.queue.jobs) == 1
+    assert len((await session.execute(select(Clip).where(Clip.camera_id == cam_a.id))).scalars().all()) == 1
 
     audit = (await session.execute(select(AuditLog).where(AuditLog.action == "clip.request"))).scalars().all()
     assert [a.actor_id for a in audit] == [str(USER_A)]
