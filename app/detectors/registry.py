@@ -37,7 +37,7 @@ class DetectorPool:
         self._stale: list[HttpDetector] = []
 
     def get(self, row: Detector) -> HttpDetector:
-        signature = (row.base_url, row.timeout_s, row.kind, row.min_confidence, row.name)
+        signature = (row.base_url, row.timeout_s, row.kind, row.min_confidence, row.name, row.adapter)
         cached = self._cache.get(row.id)
         if cached is None or cached[0] != signature:
             if cached is not None:
@@ -46,7 +46,7 @@ class DetectorPool:
                 signature,
                 HttpDetector(
                     row.name, row.base_url, row.timeout_s,
-                    id=row.id, kind=row.kind, min_confidence=row.min_confidence,
+                    id=row.id, kind=row.kind, min_confidence=row.min_confidence, adapter=row.adapter,
                 ),
             )
             self._cache[row.id] = cached

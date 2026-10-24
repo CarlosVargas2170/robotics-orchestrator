@@ -95,8 +95,10 @@ class Detector(TimestampMixin, Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(80), unique=True)
-    kind: Mapped[str] = mapped_column(String(20), index=True)  # objects | faces | animals
+    kind: Mapped[str] = mapped_column(String(20), index=True)  # objects | faces | animals | persons
     base_url: Mapped[str] = mapped_column(String(200))
+    # Como hablar con el servicio y normalizar su respuesta (ver app/detectors/adapters.py)
+    adapter: Mapped[str] = mapped_column(String(40), default="generic", server_default="generic")
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=true())
     min_confidence: Mapped[float] = mapped_column(Float, server_default="0")
     timeout_s: Mapped[float] = mapped_column(Float, server_default="30")
@@ -136,8 +138,11 @@ class Detection(Base):
     confidence: Mapped[float] = mapped_column(Float)
     # Segundos desde el inicio del clip
     offset_s: Mapped[float] = mapped_column(Float)
-    # [x, y, w, h] normalizado 0..1
+    # [x1, y1, x2, y2] en pixeles del frame analizado
     bbox: Mapped[list[float] | None] = mapped_column(JsonType)
+    track_id: Mapped[int | None] = mapped_column(Integer)
+    # Alerta del servicio (p. ej. person_requesting_help_sos); nulo si no hay
+    alert: Mapped[str | None] = mapped_column(String(60), index=True)
     raw: Mapped[dict | None] = mapped_column(JsonType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
