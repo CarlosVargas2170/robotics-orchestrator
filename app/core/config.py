@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     flussonic_user: str = ""
     flussonic_password: str = ""
 
+    # robotics-backend: emite los JWT y dice quien es el usuario (GET /api/auth/me)
+    robotics_backend_url: str = ""
+    auth_cache_seconds: float = 45.0
+
     clips_dir: Path = Path("./data/clips")
 
     frame_sample_fps: float = 1.0

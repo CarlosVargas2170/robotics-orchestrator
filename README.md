@@ -72,3 +72,23 @@ Los umbrales son por servicio (`detectors.alert_min_confidence`, por defecto 0.7
 `detectors.alert_min_frames`, por defecto 3). `detectors.max_concurrency` (por defecto 2) limita las
 peticiones simultáneas a ese servicio por proceso del worker. En la BD, `detections.alert_confirmed`
 marca toda la racha; `GET /detections?alert_confirmed=true` devuelve solo las alertas confirmadas.
+
+## Autenticación
+
+El orquestador no gestiona usuarios: valida el access token que emite `robotics-backend`
+(`POST {ROBOTICS_BACKEND_URL}/api/auth/login`) llamando a `GET /api/auth/me`, con caché de 45 s.
+Todos los endpoints, salvo `GET /health`, exigen `Authorization: Bearer <access_token>`.
+El `PANEL_TOKEN` compartido del backend **no** sirve aquí.
+
+| Rol (viene del backend) | Qué ve y qué puede hacer |
+|---|---|
+| `admin` | Todas las cámaras, clips y detecciones. Da de alta cámaras y asigna su dueño (`owner_user_id`). |
+| cualquier otro | Solo las cámaras que tiene asignadas y sus clips y detecciones. Puede pedir clips de ellas. |
+
+Las cámaras ajenas responden 404, igual que si no existieran. `ROBOTICS_BACKEND_URL` es obligatoria;
+sin ella, o si el backend no responde, la API responde 503.
+
+**WebSocket:** `WS /ws/events` exige que el primer mensaje sea `{"token": "<access_token>"}` (si no llega
+en 5 s, cierra con código 4401). Solo envía eventos de las cámaras del usuario. El token se revalida cada
+minuto: al vencer (15 min en el backend) el servidor cierra con 4401 y el cliente debe renovarlo con
+`POST /api/auth/refresh` y reconectar.
