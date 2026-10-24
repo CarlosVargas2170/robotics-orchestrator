@@ -25,7 +25,15 @@ async def process_clip(
     detectors: list[Detector],
     redis: Redis,
 ) -> None:
-    """Descarga el clip, extrae frames, corre los detectores en paralelo y guarda resultados."""
+    """Descarga el clip, extrae frames, corre los detectores en paralelo y guarda resultados.
+
+    `detectors` ya viene filtrado por camara y permisos del dueño (ver detectors_for_camera).
+    """
+    if not detectors:
+        log.info("clip %s: la camara %s no tiene servicios activos", clip.id, clip.camera_id)
+        clip.status = ClipStatus.DONE
+        await session.commit()
+        return
     try:
         clip.status = ClipStatus.DOWNLOADING
         await session.commit()
@@ -44,14 +52,17 @@ async def process_clip(
                     log.warning("detector %s fallo en clip %s: %s", detector.name, clip.id, res)
                     continue
                 for r in res:
-                    det = Detection(
-                        clip_id=clip.id, detector=detector.name, label=r.label,
+                    if r.confidence < detector.min_confidence:
+                        continue
+                    session.add(Detection(
+                        clip_id=clip.id, detector_id=detector.id, label=r.label,
                         confidence=r.confidence, offset_s=offset_s, bbox=r.bbox, raw=r.raw,
-                    )
-                    session.add(det)
+                    ))
                     await redis.publish(EVENTS_CHANNEL, json.dumps({
-                        "clip_id": clip.id, "camera_id": clip.camera_id, "detector": detector.name,
-                        "label": r.label, "confidence": r.confidence, "offset_s": offset_s, "bbox": r.bbox,
+                        "clip_id": str(clip.id), "camera_id": str(clip.camera_id),
+                        "detector": detector.name, "kind": detector.kind,
+                        "label": r.label, "confidence": r.confidence,
+                        "offset_s": offset_s, "bbox": r.bbox,
                     }))
         clip.status = ClipStatus.DONE
     except Exception as exc:
