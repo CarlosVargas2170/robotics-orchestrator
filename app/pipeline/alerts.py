@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Confirmation:
+    detector_id: object
     detector: str
     alert: str
     track_id: int | None
@@ -56,7 +57,8 @@ class AlertTracker:
                 for x in streak.dets:
                     x.alert_confirmed = True
                 confirmed.append(Confirmation(
-                    detector=detector.name, alert=d.alert, track_id=d.track_id, frames=len(streak.dets),
+                    detector_id=detector.id, detector=detector.name, alert=d.alert, track_id=d.track_id,
+                    frames=len(streak.dets),
                     first_offset_s=streak.dets[0].offset_s, offset_s=d.offset_s,
                     max_confidence=max(x.confidence for x in streak.dets),
                 ))

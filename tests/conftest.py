@@ -30,7 +30,7 @@ async def api(session, monkeypatch):
     from app.auth import backend
     from app.db.session import get_session
     from app.main import app
-    from tests.helpers import BACKEND_USERS
+    from tests.helpers import BACKEND_USERS, FakePublisher
 
     monkeypatch.setenv("ROBOTICS_BACKEND_URL", "http://backend.test")
     get_settings.cache_clear()
@@ -42,6 +42,8 @@ async def api(session, monkeypatch):
         yield session
 
     app.dependency_overrides[get_session] = _session
+    publisher = FakePublisher()
+    app.state.publisher = publisher
 
     def me(request):
         state["calls"] += 1
@@ -53,9 +55,10 @@ async def api(session, monkeypatch):
     with respx.mock(assert_all_called=False) as mock:
         mock.get("http://backend.test/api/auth/me").mock(side_effect=me)
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://orq") as client:
-            client.state, client.mock = state, mock
+            client.state, client.mock, client.publisher = state, mock, publisher
             yield client
 
     app.dependency_overrides.clear()
+    del app.state.publisher
     await backend.close_auth_client()
     get_settings.cache_clear()

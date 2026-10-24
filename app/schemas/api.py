@@ -180,3 +180,30 @@ class CameraDetectorOut(BaseModel):
     name: str
     kind: str
     enabled: bool
+
+
+# --- Alertas confirmadas ---------------------------------------------------------------------
+
+
+class AlertOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    clip_id: uuid.UUID
+    camera_id: uuid.UUID
+    robot_code: str | None = None
+    detector_id: uuid.UUID
+    alert: str
+    track_id: int | None
+    started_at: datetime
+    first_offset_s: float
+    offset_s: float
+    frames: int
+    max_confidence: float
+    created_at: datetime
+    acknowledged_at: datetime | None
+    acknowledged_by: uuid.UUID | None
+    note: str | None
+
+
+class AcknowledgeIn(BaseModel):
+    note: str | None = Field(default=None, max_length=500)

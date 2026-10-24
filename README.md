@@ -164,3 +164,25 @@ No hay un servicio de cola aparte: la tabla `clips` es la cola y un clip `pendin
 
 **Usar Redis más adelante:** la cola y los eventos están aislados en `app/queue.py` y `app/events.py`. Pasar a
 Redis significa implementar esas dos piezas (y el arranque del worker) con Redis; el resto del sistema no cambia.
+
+## Alertas
+
+Cuando una alerta del servicio se confirma (ver «Eventos de `WS /ws/events`»), además del evento en vivo
+queda registrada en la tabla `alerts`: **una fila por alerta, no por frame**. Así el operador que abre la
+pantalla más tarde ve lo que sigue pendiente, aunque no estuviera conectado cuando ocurrió.
+
+| Endpoint | Para qué |
+|---|---|
+| `GET /alerts` | Alertas de tus cámaras (el admin ve todas), de la más reciente a la más antigua. Filtros: `acknowledged` (`false` = pendientes), `camera_id`, `alert`, `since`, `until`, `limit` (máx. 200), `offset` |
+| `GET /alerts/{id}` | Una alerta (404 si no es de tus cámaras) |
+| `POST /alerts/{id}/acknowledge` | Marca la alerta como atendida, con una nota opcional (máx. 500). Si ya estaba atendida no se sobrescribe quién lo hizo primero |
+
+Cada alerta incluye `robot_code`, el tipo (`alert`), la persona (`track_id`), el instante real en que empezó
+(`started_at`), los frames que la sostuvieron, la confianza máxima y quién y cuándo la atendió.
+
+Dos eventos de `WS /ws/events` se relacionan con ellas: `alert_confirmed` (lleva `alert_id`) y
+`alert_acknowledged`, que se emite al atenderla para que las demás pantallas abiertas la quiten de su lista.
+
+Los eventos se publican **después** de guardar los datos en la BD, de modo que al recibir uno ya se puede consultar.
+Si un clip se reprocesa porque un worker cayó a mitad, se descartan las detecciones y alertas parciales del
+intento anterior para no duplicarlas.
