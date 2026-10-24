@@ -18,9 +18,9 @@ API en http://localhost:8000 · docs en http://localhost:8000/docs
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -r requirements-dev.txt
 docker compose up -d db redis
-alembic revision --autogenerate -m "init" && alembic upgrade head
+alembic upgrade head
 uvicorn app.main:app --reload
 arq app.workers.tasks.WorkerSettings                # en otra terminal
 pytest
