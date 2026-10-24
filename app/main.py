@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import alerts, cameras, clips, detections, detectors, events, health
+from app.api.routers import alerts, cameras, clips, detections, detectors, events, health, stats
 from app.auth.backend import close_auth_client
 from app.core.config import get_settings
 from app.core.logging import setup_logging
@@ -31,9 +31,11 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Total-Count"],
 )
 
 for r in (
-    health.router, cameras.router, detectors.router, clips.router, detections.router, alerts.router, events.router
+    health.router, cameras.router, detectors.router, clips.router, detections.router, alerts.router, stats.router,
+    events.router
 ):
     app.include_router(r)

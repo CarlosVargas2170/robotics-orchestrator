@@ -191,3 +191,33 @@ Dos eventos de `WS /ws/events` se relacionan con ellas: `alert_confirmed` (lleva
 Los eventos se publican **después** de guardar los datos en la BD, de modo que al recibir uno ya se puede consultar.
 Si un clip se reprocesa porque un worker cayó a mitad, se descartan las detecciones y alertas parciales del
 intento anterior para no duplicarlas.
+
+## Historial
+
+Todos los listados devuelven una lista simple, de lo más reciente a lo más antiguo, solo de los robots del usuario
+(el admin ve todos). El **total de resultados, sin paginar**, va en la cabecera `X-Total-Count` (expuesta por CORS para
+que el navegador la lea). Las fechas sin zona horaria se toman como UTC; `since` se incluye y `until` se excluye.
+
+| Endpoint | Filtros | Cada fila incluye |
+|---|---|---|
+| `GET /detections` | `since`, `until` (instante real de la detección), `camera_id`, `clip_id`, `detector_id`, `kind` (tipo de servicio: `persons`, `faces`...), `label`, `alert`, `alert_confirmed`, `min_confidence`, `limit` (máx. 500), `offset` | `detector_name`, `detector_kind`, `robot_code`, `camera_id`, `detected_at` (inicio del clip + `offset_s`) |
+| `GET /clips` | `since`, `until` (inicio del clip), `camera_id`, `status` (`done`, `failed`, `no_data`...), `source`, `limit` (máx. 200), `offset` | `robot_code`, estado y error |
+| `GET /alerts` | `acknowledged`, `camera_id`, `alert`, `kind`, `since`, `until`, `limit` (máx. 200), `offset` | `robot_code`, `detector_name`, `detector_kind` |
+
+### Resumen para pantallas y gráficos
+
+`GET /stats/summary?since=...&until=...&tz=America/La_Paz&camera_id=...` devuelve, en una sola llamada y solo de los
+robots del usuario: las **alertas** (total, pendientes, por día, por tipo y por robot), las **detecciones** (total, por
+servicio y por día) y los **clips** (total y por estado, con todos los estados presentes aunque valgan 0).
+
+- Por defecto cuenta los últimos 7 días; el rango máximo es de 366 días.
+- `tz` es la zona horaria con la que se agrupa por día (por defecto `UTC`). Una alerta a las 02:00 UTC del día 11 cae en
+  el día 10 con `America/La_Paz`. La zona la valida PostgreSQL, que es quien agrupa.
+
+### Rendimiento
+
+El instante real de una detección es `clip.started_at + offset_s`, una expresión sin índice, así que filtrar y ordenar
+por fecha recorre `detections`. Medido con 576.000 detecciones (~2 días muy intensos de un robot): el total de un día tarda
+~0,2 s, una página de 100 ~0,26 s y el resumen de 7 días ~0,56 s. Crece de forma lineal; con decenas de millones de filas
+conviene guardar `detected_at` y `camera_id` en `detections` con un índice, y definir cuánto tiempo se conservan las
+detecciones.

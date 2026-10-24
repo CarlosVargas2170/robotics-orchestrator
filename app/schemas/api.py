@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -45,6 +45,7 @@ class ClipOut(BaseModel):
     camera_id: uuid.UUID
     started_at: datetime
     duration_s: int
+    robot_code: str | None = None
     status: ClipStatus
     source: ClipSource
     requested_by: uuid.UUID | None
@@ -55,10 +56,15 @@ class DetectionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     clip_id: uuid.UUID
+    camera_id: uuid.UUID | None = None
+    robot_code: str | None = None
     detector_id: uuid.UUID
+    detector_name: str | None = None  # p. ej. "Personas"
+    detector_kind: str | None = None  # persons | faces | animals | objects
     label: str
     confidence: float
     offset_s: float
+    detected_at: datetime | None = None  # instante real: inicio del clip + offset_s
     bbox: list[float] | None
     track_id: int | None
     alert: str | None
@@ -192,6 +198,8 @@ class AlertOut(BaseModel):
     camera_id: uuid.UUID
     robot_code: str | None = None
     detector_id: uuid.UUID
+    detector_name: str | None = None
+    detector_kind: str | None = None
     alert: str
     track_id: int | None
     started_at: datetime
@@ -207,3 +215,58 @@ class AlertOut(BaseModel):
 
 class AcknowledgeIn(BaseModel):
     note: str | None = Field(default=None, max_length=500)
+
+
+# --- Resumen del historial ---------------------------------------------------------------------
+
+
+class DayCount(BaseModel):
+    day: date
+    count: int
+
+
+class TypeCount(BaseModel):
+    alert: str
+    count: int
+
+
+class RobotCount(BaseModel):
+    camera_id: uuid.UUID
+    name: str
+    robot_code: str | None
+    count: int
+
+
+class ServiceCount(BaseModel):
+    detector_id: uuid.UUID
+    name: str
+    kind: str
+    count: int
+
+
+class AlertStats(BaseModel):
+    total: int
+    pending: int
+    by_day: list[DayCount]
+    by_type: list[TypeCount]
+    by_robot: list[RobotCount]
+
+
+class DetectionStats(BaseModel):
+    total: int
+    by_service: list[ServiceCount]
+    by_day: list[DayCount]
+
+
+class ClipStats(BaseModel):
+    total: int
+    by_status: dict[str, int]
+
+
+class StatsOut(BaseModel):
+    since: datetime
+    until: datetime
+    tz: str
+    alerts: AlertStats
+    detections: DetectionStats
+    clips: ClipStats
