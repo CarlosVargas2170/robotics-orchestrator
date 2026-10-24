@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Detection
+from app.auth.backend import CurrentUser
+from app.auth.deps import get_current_user
+from app.db.models import Camera, Clip, Detection
 from app.db.session import get_session
 from app.schemas.api import DetectionOut
 
@@ -21,13 +23,19 @@ async def list_detections(
     min_confidence: float = 0.0,
     limit: int = 100,
     session: AsyncSession = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
 ):
+    """Detecciones de las camaras del usuario; el admin ve todas."""
     stmt = (
         select(Detection)
+        .join(Clip, Clip.id == Detection.clip_id)
+        .join(Camera, Camera.id == Clip.camera_id)
         .where(Detection.confidence >= min_confidence)
         .order_by(Detection.id.desc())
         .limit(min(limit, 500))
     )
+    if not user.is_admin:
+        stmt = stmt.where(Camera.owner_user_id == user.id)
     if clip_id is not None:
         stmt = stmt.where(Detection.clip_id == clip_id)
     if detector_id is not None:

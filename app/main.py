@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import cameras, clips, detections, events, health
+from app.auth.backend import close_auth_client
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 
@@ -18,6 +19,7 @@ async def lifespan(app: FastAPI):
     app.state.queue = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     yield
     await app.state.queue.aclose()
+    await close_auth_client()
 
 
 app = FastAPI(title="Robotics Orchestrator", version="0.1.0", lifespan=lifespan)
