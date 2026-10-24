@@ -5,7 +5,7 @@ from arq.connections import RedisSettings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import cameras, clips, detections, events, health
+from app.api.routers import cameras, clips, detections, detectors, events, health
 from app.auth.backend import close_auth_client
 from app.core.config import get_settings
 from app.core.logging import setup_logging
@@ -31,5 +31,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (health.router, cameras.router, clips.router, detections.router, events.router):
+for r in (health.router, cameras.router, detectors.router, clips.router, detections.router, events.router):
     app.include_router(r)
