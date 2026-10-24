@@ -14,6 +14,7 @@ class Adapter:
     path: str
     build_request: Callable[[bytes, FrameContext], dict]  # kwargs para httpx.post
     parse: Callable[[dict], list[DetectionResult]]
+    health_path: str | None = None  # GET que indica si el servicio esta listo; None si no tiene
 
 
 def _generic_request(frame: bytes, ctx: FrameContext) -> dict:
@@ -56,5 +57,7 @@ def _person_parse(body: dict) -> list[DetectionResult]:
 
 ADAPTERS: dict[str, Adapter] = {
     "generic": Adapter("/detect", _generic_request, _generic_parse),
-    "person_detection_v1": Adapter("/api/v1/analyze/frame", _person_request, _person_parse),
+    "person_detection_v1": Adapter(
+        "/api/v1/analyze/frame", _person_request, _person_parse, health_path="/api/v1/health"
+    ),
 }

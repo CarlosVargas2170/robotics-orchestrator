@@ -92,3 +92,32 @@ sin ella, o si el backend no responde, la API responde 503.
 en 5 s, cierra con código 4401). Solo envía eventos de las cámaras del usuario. El token se revalida cada
 minuto: al vencer (15 min en el backend) el servidor cierra con 4401 y el cliente debe renovarlo con
 `POST /api/auth/refresh` y reconectar.
+
+## Gestión de servicios de IA
+
+Los servicios (personas, rostros, animales, objetos) se registran por API, sin tocar `.env` ni la BD.
+Cada clip se envía solo a los servicios que cumplen las tres condiciones: están **activados en la cámara**,
+**habilitados globalmente** y el **dueño de la cámara tiene permiso**.
+
+| Endpoint | Quién | Para qué |
+|---|---|---|
+| `POST /detectors` · `GET /detectors` · `PATCH`/`DELETE /detectors/{id}` | admin | Registrar y editar servicios (URL, adaptador, umbrales) |
+| `GET /detectors/{id}/health` | admin | Comprobar que el servicio está en línea |
+| `PUT`/`DELETE /detectors/{id}/access/{user_id}` · `GET .../access` | admin | Dar, suspender (`enabled: false`) o quitar el permiso de un usuario |
+| `GET /detectors/available` | cualquiera | Servicios que el usuario puede activar (sin exponer la URL interna) |
+| `PATCH /cameras/{id}` | admin | Editar una cámara o reasignarla a otro usuario (`owner_user_id`) |
+| `PUT`/`DELETE /cameras/{id}/detectors/{detector_id}` · `GET .../detectors` | dueño o admin | Activar, apagar o quitar un servicio en la cámara |
+
+Flujo para dar de alta el servicio de personas:
+
+```
+1. POST /detectors                      {"name": "Personas", "kind": "persons", "adapter": "person_detection_v1",
+                                         "base_url": "http://IP:8001"}
+2. GET  /detectors/{id}/health          -> {"online": true, ...}
+3. PUT  /detectors/{id}/access/{user}   (el id del usuario en robotics-backend)
+4. PUT  /cameras/{camera}/detectors/{id}
+```
+
+`base_url` solo admite `http`/`https`, sin credenciales, y rechaza direcciones de metadatos (169.254.x.x). Un
+servicio con detecciones guardadas no se elimina (409): se deshabilita con `PATCH {"enabled": false}`.
+No se comprueba que el `user_id` de un permiso exista en robotics-backend.
