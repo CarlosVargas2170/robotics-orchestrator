@@ -17,6 +17,7 @@ async def list_detections(
     detector_id: uuid.UUID | None = None,
     label: str | None = None,
     alert: str | None = None,
+    alert_confirmed: bool | None = None,
     min_confidence: float = 0.0,
     limit: int = 100,
     session: AsyncSession = Depends(get_session),
@@ -35,4 +36,6 @@ async def list_detections(
         stmt = stmt.where(Detection.label == label)
     if alert:
         stmt = stmt.where(Detection.alert == alert)
+    if alert_confirmed is not None:
+        stmt = stmt.where(Detection.alert_confirmed.is_(alert_confirmed))
     return (await session.execute(stmt)).scalars().all()

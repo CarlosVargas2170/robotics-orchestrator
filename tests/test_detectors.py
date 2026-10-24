@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 import respx
@@ -80,3 +82,22 @@ async def test_person_adapter_returns_nothing_when_no_person():
 def test_unknown_adapter_is_rejected():
     with pytest.raises(ValueError, match="Adaptador desconocido"):
         HttpDetector("x", "http://x", 5, adapter="nope")
+
+
+@respx.mock
+async def test_concurrent_requests_to_a_service_are_limited():
+    in_flight = peak = 0
+
+    async def slow(request):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+        return httpx.Response(200, json={"detections": []})
+
+    respx.post("http://det:9000/detect").mock(side_effect=slow)
+    detector = HttpDetector("objects", "http://det:9000", 5, max_concurrency=2)
+    await asyncio.gather(*(detector.detect(b"x", CTX) for _ in range(8)))
+
+    assert peak == 2

@@ -30,5 +30,7 @@ class Detector(Protocol):
     name: str
     kind: str
     min_confidence: float
+    alert_min_confidence: float
+    alert_min_frames: int
 
     async def detect(self, frame: bytes, ctx: FrameContext) -> list[DetectionResult]: ...
