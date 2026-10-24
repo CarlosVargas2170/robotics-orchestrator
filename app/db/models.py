@@ -174,6 +174,40 @@ class Detection(Base):
     detector: Mapped[Detector] = relationship()
 
 
+class Alert(Base):
+    """Una alerta confirmada (ver pipeline/alerts.py): una fila por alerta, no por frame.
+
+    Las detecciones y los eventos en vivo son efimeros para quien no esta mirando; la alerta queda aqui hasta que
+    alguien la atiende, de modo que el operador que abre la pantalla despues ve lo pendiente.
+    """
+
+    __tablename__ = "alerts"
+    __table_args__ = (
+        Index("ix_alerts_camera_started", "camera_id", "started_at"),
+        Index("ix_alerts_pending", "started_at", postgresql_where=text("acknowledged_at IS NULL")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    clip_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clips.id", ondelete="CASCADE"), index=True)
+    camera_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cameras.id"))
+    detector_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("detectors.id"))
+    alert: Mapped[str] = mapped_column(String(60), index=True)  # p. ej. person_requesting_help_sos
+    track_id: Mapped[int | None] = mapped_column(Integer)
+    # Instante real en que empezo la alerta (inicio del clip + first_offset_s)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    first_offset_s: Mapped[float] = mapped_column(Float)
+    offset_s: Mapped[float] = mapped_column(Float)  # segundo del clip en que se confirmo
+    frames: Mapped[int] = mapped_column(Integer)
+    max_confidence: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Atencion: nulo mientras nadie la haya atendido
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acknowledged_by: Mapped[uuid.UUID | None] = mapped_column(Uuid)  # users.id de robotics-backend
+    note: Mapped[str | None] = mapped_column(String(500))
+
+    camera: Mapped[Camera] = relationship()
+
+
 class AuditLog(Base):
     """Mismo formato que audit_log de robotics-backend, para poder unificarlas despues."""
 

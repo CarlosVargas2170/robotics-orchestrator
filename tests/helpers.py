@@ -30,3 +30,13 @@ async def make_clip(session, camera, started: datetime, status=ClipStatus.PENDIN
     session.add(clip)
     await session.flush()
     return clip
+
+
+class FakePublisher:
+    """Sustituye al publicador de eventos de la API (NOTIFY de PostgreSQL)."""
+
+    def __init__(self):
+        self.published: list[str] = []
+
+    async def publish(self, message: str) -> None:
+        self.published.append(message)
