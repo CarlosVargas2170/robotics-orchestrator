@@ -85,8 +85,13 @@ El `PANEL_TOKEN` compartido del backend **no** sirve aquí.
 
 | Rol (viene del backend) | Qué ve y qué puede hacer |
 |---|---|
-| `admin` | Todas las cámaras, clips y detecciones. Da de alta cámaras y asigna su dueño (`owner_user_id`). |
-| cualquier otro | Solo las cámaras que tiene asignadas y sus clips y detecciones. Puede pedir clips de ellas. |
+| `admin` | Todas las cámaras, clips, detecciones y alertas. Da de alta cámaras y asigna su dueño (`owner_user_id`). Gestiona servicios y permisos. |
+| `cliente` | Solo las cámaras que tiene asignadas y sus clips, detecciones y alertas. Puede pedir clips y atender alertas de ellas. |
+| `operator` | **Sin acceso** (403): es el rol del control de robots (botones, audios, voz), otro producto. Lo mismo vale para cualquier rol que no sea `admin` o `cliente`. |
+
+El rol `cliente` se crea en `robotics-backend` (migración `0015`) y ese backend le impide usar el control de robots.
+El orquestador comprueba el rol en **cada** petición, también cuando el token sale de la caché. En el WebSocket,
+un rol sin acceso cierra con el código `4403`.
 
 Las cámaras ajenas responden 404, igual que si no existieran. `ROBOTICS_BACKEND_URL` es obligatoria;
 sin ella, o si el backend no responde, la API responde 503.

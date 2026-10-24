@@ -6,7 +6,7 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.auth.access import CameraAccess
-from app.auth.backend import AuthError, BackendUnavailable, get_auth_client
+from app.auth.backend import AuthError, BackendUnavailable, RoleNotAllowed, get_auth_client
 from app.db.models import Camera
 from app.db.session import SessionLocal
 
@@ -36,6 +36,9 @@ async def events(ws: WebSocket):
         auth = get_auth_client()
         token = (await asyncio.wait_for(ws.receive_json(), AUTH_TIMEOUT_S))["token"]
         user = await auth.authenticate(token)
+    except RoleNotAllowed:
+        await ws.close(code=4403)
+        return
     except BackendUnavailable:
         await ws.close(code=1013)
         return
@@ -59,6 +62,8 @@ async def events(ws: WebSocket):
                 continue
             if await access.allows(json.loads(payload)["camera_id"]):
                 await ws.send_text(payload)
+    except RoleNotAllowed:
+        await ws.close(code=4403)
     except (AuthError, BackendUnavailable):
         await ws.close(code=4401)
     except WebSocketDisconnect:
