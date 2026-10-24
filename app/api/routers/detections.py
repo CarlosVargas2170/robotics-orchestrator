@@ -16,6 +16,7 @@ async def list_detections(
     clip_id: uuid.UUID | None = None,
     detector_id: uuid.UUID | None = None,
     label: str | None = None,
+    alert: str | None = None,
     min_confidence: float = 0.0,
     limit: int = 100,
     session: AsyncSession = Depends(get_session),
@@ -32,4 +33,6 @@ async def list_detections(
         stmt = stmt.where(Detection.detector_id == detector_id)
     if label:
         stmt = stmt.where(Detection.label == label)
+    if alert:
+        stmt = stmt.where(Detection.alert == alert)
     return (await session.execute(stmt)).scalars().all()

@@ -5,28 +5,8 @@ que se revierte; se omite si la BD no esta disponible.
 """
 import uuid
 
-import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-
-from app.core.config import get_settings
 from app.db.models import Camera, CameraDetector, Detector, DetectorAccess
 from app.detectors.registry import detectors_for_camera
-
-
-@pytest.fixture
-async def session():
-    engine = create_async_engine(get_settings().database_url)
-    try:
-        conn = await engine.connect()
-    except Exception:
-        await engine.dispose()
-        pytest.skip("PostgreSQL no disponible")
-    trans = await conn.begin()
-    async with AsyncSession(bind=conn, expire_on_commit=False) as s:
-        yield s
-    await trans.rollback()
-    await conn.close()
-    await engine.dispose()
 
 
 def _detector(kind: str, enabled: bool = True) -> Detector:

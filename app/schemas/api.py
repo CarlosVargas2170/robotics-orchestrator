@@ -48,3 +48,5 @@ class DetectionOut(BaseModel):
     confidence: float
     offset_s: float
     bbox: list[float] | None
+    track_id: int | None
+    alert: str | None
