@@ -270,3 +270,30 @@ class StatsOut(BaseModel):
     alerts: AlertStats
     detections: DetectionStats
     clips: ClipStats
+
+
+# --- Catalogo de adaptadores y servicios por usuario -------------------------------------------
+
+
+class AdapterOut(BaseModel):
+    name: str
+    description: str
+    analyze_path: str
+    health_path: str | None
+    has_health: bool
+
+
+class ActiveOn(BaseModel):
+    camera_id: uuid.UUID
+    name: str
+    robot_code: str | None
+
+
+class UserDetectorOut(BaseModel):
+    detector_id: uuid.UUID
+    name: str
+    kind: str
+    enabled: bool  # el servicio esta habilitado globalmente
+    allowed: bool  # el usuario tiene permiso y no esta suspendido
+    suspended: bool  # tiene permiso pero esta suspendido
+    active_on: list[ActiveOn]  # robots del usuario donde esta encendido

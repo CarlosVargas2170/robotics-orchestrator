@@ -15,6 +15,7 @@ class Adapter:
     build_request: Callable[[bytes, FrameContext], dict]  # kwargs para httpx.post
     parse: Callable[[dict], list[DetectionResult]]
     health_path: str | None = None  # GET que indica si el servicio esta listo; None si no tiene
+    description: str = ""  # para el catalogo que ve el admin al registrar un servicio
 
 
 def _generic_request(frame: bytes, ctx: FrameContext) -> dict:
@@ -56,8 +57,14 @@ def _person_parse(body: dict) -> list[DetectionResult]:
 
 
 ADAPTERS: dict[str, Adapter] = {
-    "generic": Adapter("/detect", _generic_request, _generic_parse),
+    "generic": Adapter(
+        "/detect", _generic_request, _generic_parse,
+        description="Formato propio: POST /detect con la imagen en el campo `image`; responde "
+                    "{\"detections\": [{\"label\", \"confidence\", \"bbox\"}]}. Sin chequeo de salud.",
+    ),
     "person_detection_v1": Adapter(
-        "/api/v1/analyze/frame", _person_request, _person_parse, health_path="/api/v1/health"
+        "/api/v1/analyze/frame", _person_request, _person_parse, health_path="/api/v1/health",
+        description="Servicio 1 (v2.1.0): deteccion, rastreo y seguridad de personas (caidas, SOS, inmovilidad). "
+                    "POST /api/v1/analyze/frame y GET /api/v1/health.",
     ),
 }

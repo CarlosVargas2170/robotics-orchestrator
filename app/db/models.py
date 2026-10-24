@@ -74,7 +74,10 @@ class Camera(TimestampMixin, Base):
     last_ingest_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     clips: Mapped[list["Clip"]] = relationship(back_populates="camera")
-    detector_links: Mapped[list["CameraDetector"]] = relationship(back_populates="camera")
+    # Al borrar el robot se borran sus servicios activados (la BD ya lo hace con ON DELETE CASCADE)
+    detector_links: Mapped[list["CameraDetector"]] = relationship(
+        back_populates="camera", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class Clip(TimestampMixin, Base):

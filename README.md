@@ -221,3 +221,40 @@ por fecha recorre `detections`. Medido con 576.000 detecciones (~2 días muy int
 ~0,2 s, una página de 100 ~0,26 s y el resumen de 7 días ~0,56 s. Crece de forma lineal; con decenas de millones de filas
 conviene guardar `detected_at` y `camera_id` en `detections` con un índice, y definir cuánto tiempo se conservan las
 detecciones.
+
+## Gestión de robots y servicios
+
+### Robots (`/cameras`)
+
+| Endpoint | Quién | Para qué |
+|---|---|---|
+| `GET /cameras` | Dueño (los suyos) o admin (todos) | Lista con `owner_user_id` (el admin ve los de un usuario), `enabled`, `robot_code`, `q` (busca en nombre, stream y código), `limit` (máx. 200) y `offset`. El total va en `X-Total-Count`. |
+| `GET /cameras/{id}` | Dueño o admin | Un robot (404 si no es tuyo) |
+| `POST /cameras`, `PATCH /cameras/{id}` | Admin | Alta, edición y reasignación de dueño |
+| `DELETE /cameras/{id}` | Admin | Solo robots que **nunca procesaron nada**. Con historial responde 409: se desactiva con `PATCH {"enabled": false}`, que conserva el historial y detiene la ingesta. |
+
+### Validación contra robotics-backend
+
+Las dos bases de datos son independientes y no hay claves foráneas entre ellas. Para no guardar registros fantasma,
+al **registrar o cambiar** el dueño (`owner_user_id`) o el `robot_code`, y al **dar permiso** de un servicio a un usuario,
+el orquestador pregunta al backend (`GET /api/auth/users` y `GET /api/robots`) **con el token del propio admin**, sin
+credenciales aparte. Responde **422** con el motivo si:
+
+- el usuario no existe en el backend, o está desactivado;
+- el usuario tiene rol `operator` (solo `admin` y `cliente` usan este producto);
+- el robot no existe en el backend (uno inactivo sí vale).
+
+Si el backend no responde se rechaza con **503**: es preferible reintentar que guardar sin validar. Solo se consulta
+cuando algo cambia (editar la ubicación, repetir el mismo dueño o dejar el robot sin dueño no preguntan nada).
+Suspender o quitar un permiso **no** exige que el usuario exista, para poder limpiar a quien ya se borró del backend.
+
+### Servicios
+
+- `GET /detectors/adapters` (admin): los tipos de servicio que el sistema sabe leer, con su descripción, sus rutas y si
+  tienen chequeo de salud. Es la lista de valores válidos de `adapter` al registrar un servicio.
+- `GET /users/{user_id}/detectors` (admin): **todos** los servicios indicando, para ese usuario, si puede usarlos
+  (`allowed`), si el permiso está suspendido (`suspended`), si el servicio está habilitado (`enabled`) y en qué robots
+  suyos está encendido (`active_on`). No valida que el usuario exista, para poder revisar a uno ya borrado.
+
+Dar permiso a un usuario **no activa** el servicio en sus robots: se activa robot por robot
+(`PUT /cameras/{id}/detectors/{detector_id}`), porque cada servicio consume recursos y recibe imágenes.

@@ -7,7 +7,7 @@ esta desactivado. El resultado se cachea unos segundos para no consultar en cada
 import hashlib
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -36,6 +36,9 @@ class CurrentUser:
     id: uuid.UUID
     login: str
     role: str
+    # Token de ESTA peticion, para consultar a robotics-backend en nombre del usuario. Lo pone get_current_user;
+    # nunca se guarda en la cache de autenticacion ni sale en logs.
+    token: str = field(default="", repr=False, compare=False)
 
     @property
     def is_admin(self) -> bool:
@@ -44,7 +47,8 @@ class CurrentUser:
 
 class BackendAuthClient:
     def __init__(self, base_url: str, ttl_s: float, client: httpx.AsyncClient | None = None):
-        self._url = f"{base_url.rstrip('/')}/api/auth/me"
+        self._base = base_url.rstrip("/")
+        self._url = f"{self._base}/api/auth/me"
         self._ttl = ttl_s
         self._client = client or httpx.AsyncClient(timeout=5.0)
         self._cache: dict[str, tuple[float, CurrentUser]] = {}
@@ -80,6 +84,28 @@ class BackendAuthClient:
             self._cache = {k: v for k, v in self._cache.items() if v[0] > now}
         self._cache[key] = (now + self._ttl, user)
         return user
+
+    async def _backend_get(self, token: str, path: str, **params):
+        """GET a robotics-backend con el token del propio usuario. Cualquier fallo es BackendUnavailable."""
+        try:
+            resp = await self._client.get(
+                f"{self._base}{path}", params=params or None, headers={"Authorization": f"Bearer {token}"}
+            )
+        except httpx.HTTPError as exc:
+            raise BackendUnavailable(f"robotics-backend no responde: {exc.__class__.__name__}") from exc
+        if resp.status_code != 200:
+            raise BackendUnavailable(f"robotics-backend respondio {resp.status_code} en {path}")
+        return resp.json()
+
+    async def find_user(self, token: str, user_id: uuid.UUID) -> dict | None:
+        """El usuario de robotics-backend (id, login, role, active), o None si no existe. Requiere token de admin."""
+        users = await self._backend_get(token, "/api/auth/users")
+        return next((u for u in users if u.get("id") == str(user_id)), None)
+
+    async def robot_exists(self, token: str, code: str) -> bool:
+        """Si el robot existe en robotics-backend, aunque este inactivo. Requiere token de panel (admin)."""
+        robots = await self._backend_get(token, "/api/robots", include_inactive="true")
+        return any(r.get("code") == code for r in robots)
 
     async def aclose(self) -> None:
         await self._client.aclose()

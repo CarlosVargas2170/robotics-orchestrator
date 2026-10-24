@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 from app.db.models import Camera, Clip, ClipStatus
 
-ADMIN_ID, USER_A, USER_B, OPERATOR_ID = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+ADMIN_ID, USER_A, USER_B, OPERATOR_ID, INACTIVE_ID = (uuid.uuid4() for _ in range(5))
 BACKEND_USERS = {
     "tok-admin": {"id": str(ADMIN_ID), "login": "admin", "role": "admin", "active": True},
     "tok-a": {"id": str(USER_A), "login": "ana", "role": "cliente", "active": True},
@@ -11,6 +11,16 @@ BACKEND_USERS = {
     # Maneja el control de robots (otro producto): no debe entrar al reconocimiento de video
     "tok-op": {"id": str(OPERATOR_ID), "login": "olga", "role": "operator", "active": True},
 }
+
+# Lo que devuelve GET /api/auth/users de robotics-backend: los usuarios con token mas uno desactivado
+DIRECTORY_USERS = [*BACKEND_USERS.values(),
+                   {"id": str(INACTIVE_ID), "login": "ines", "role": "cliente", "active": False}]
+# Lo que devuelve GET /api/robots?include_inactive=true
+DIRECTORY_ROBOTS = [
+    {"code": "SERBOT01", "name": "Serbot 1", "active": True},
+    {"code": "SERBOT02", "name": "Serbot 2", "active": True},
+    {"code": "VIEJO", "name": "Robot retirado", "active": False},
+]
 
 
 def bearer(token: str) -> dict:

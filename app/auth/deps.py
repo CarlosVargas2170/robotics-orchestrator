@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -17,7 +19,8 @@ async def get_current_user(
     if credentials is None:
         raise HTTPException(401, "Falta el token", headers={"WWW-Authenticate": "Bearer"})
     try:
-        return await get_auth_client().authenticate(credentials.credentials)
+        user = await get_auth_client().authenticate(credentials.credentials)
+        return replace(user, token=credentials.credentials)
     except AuthError:
         raise HTTPException(401, "Token invalido", headers={"WWW-Authenticate": "Bearer"}) from None
     except RoleNotAllowed:
