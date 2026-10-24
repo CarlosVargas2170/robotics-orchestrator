@@ -50,3 +50,4 @@ class DetectionOut(BaseModel):
     bbox: list[float] | None
     track_id: int | None
     alert: str | None
+    alert_confirmed: bool

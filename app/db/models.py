@@ -19,6 +19,7 @@ from sqlalchemy import (
     Integer,
     String,
     Uuid,
+    false,
     func,
     true,
 )
@@ -102,6 +103,11 @@ class Detector(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=true())
     min_confidence: Mapped[float] = mapped_column(Float, server_default="0")
     timeout_s: Mapped[float] = mapped_column(Float, server_default="30")
+    # Una alerta se confirma si supera esta confianza en `alert_min_frames` frames consecutivos
+    alert_min_confidence: Mapped[float] = mapped_column(Float, default=0.7, server_default="0.7")
+    alert_min_frames: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    # Peticiones simultaneas al servicio por proceso del worker
+    max_concurrency: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
 
 
 class DetectorAccess(TimestampMixin, Base):
@@ -143,6 +149,8 @@ class Detection(Base):
     track_id: Mapped[int | None] = mapped_column(Integer)
     # Alerta del servicio (p. ej. person_requesting_help_sos); nulo si no hay
     alert: Mapped[str | None] = mapped_column(String(60), index=True)
+    # True cuando la alerta cumplio el criterio de confianza y repeticion del detector
+    alert_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), index=True)
     raw: Mapped[dict | None] = mapped_column(JsonType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

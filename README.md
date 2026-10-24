@@ -57,3 +57,18 @@ app/workers/    tareas Arq
 app/db/         modelos y sesión
 migrations/     Alembic
 ```
+
+## Eventos de `WS /ws/events`
+
+Cada mensaje es un JSON con `type`:
+
+- `detection`: una detección individual (`detector`, `kind`, `label`, `confidence`, `offset_s`, `bbox`,
+  `track_id`, `alert`). `alert` es la alerta **cruda** del servicio y puede ser un falso positivo.
+- `alert_confirmed`: se emite **una vez** cuando la misma persona (`track_id`) mantiene la misma alerta
+  con `confidence >= alert_min_confidence` durante `alert_min_frames` frames consecutivos. Es la que
+  debe usar el frontend para avisar al operador.
+
+Los umbrales son por servicio (`detectors.alert_min_confidence`, por defecto 0.7, y
+`detectors.alert_min_frames`, por defecto 3). `detectors.max_concurrency` (por defecto 2) limita las
+peticiones simultáneas a ese servicio por proceso del worker. En la BD, `detections.alert_confirmed`
+marca toda la racha; `GET /detections?alert_confirmed=true` devuelve solo las alertas confirmadas.
