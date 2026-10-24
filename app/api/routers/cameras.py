@@ -1,15 +1,17 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import audit
+from app.api.pagination import page, set_total
 from app.auth.access import get_visible_camera, visible_cameras
 from app.auth.backend import CurrentUser
 from app.auth.deps import get_current_user, require_admin
-from app.db.models import Camera, CameraDetector, Detector, DetectorAccess
+from app.auth.directory import ensure_product_user, ensure_robot
+from app.db.models import Camera, CameraDetector, Clip, Detector, DetectorAccess
 from app.db.session import get_session
 from app.schemas.api import CameraDetectorIn, CameraDetectorOut, CameraIn, CameraOut, CameraPatch
 
@@ -25,11 +27,48 @@ async def _camera_or_404(session: AsyncSession, user: CurrentUser, camera_id: uu
 
 @router.get("", response_model=list[CameraOut])
 async def list_cameras(
-    session: AsyncSession = Depends(get_session), user: CurrentUser = Depends(get_current_user)
+    response: Response,
+    owner_user_id: uuid.UUID | None = None,
+    enabled: bool | None = None,
+    robot_code: str | None = None,
+    q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
 ):
-    """Las camaras del usuario; el admin ve todas."""
-    stmt = visible_cameras(select(Camera).order_by(Camera.name), user)
+    """Los robots del usuario (el admin ve todos), por nombre. El total, sin paginar, va en `X-Total-Count`.
+
+    `owner_user_id` sirve al admin para ver los robots de un usuario; un usuario normal solo ve los suyos igualmente.
+    `q` busca por nombre, stream o codigo de robot.
+    """
+    limit, offset = page(limit, offset, max_limit=200)
+
+    def build(*columns):
+        stmt = visible_cameras(select(*columns).select_from(Camera), user)
+        if owner_user_id is not None:
+            stmt = stmt.where(Camera.owner_user_id == owner_user_id)
+        if enabled is not None:
+            stmt = stmt.where(Camera.enabled.is_(enabled))
+        if robot_code:
+            stmt = stmt.where(Camera.robot_code == robot_code)
+        if q:
+            stmt = stmt.where(or_(*(col.icontains(q, autoescape=True) for col in (
+                Camera.name, Camera.stream_name, Camera.robot_code))))
+        return stmt
+
+    set_total(response, await session.scalar(build(func.count(Camera.id))))
+    stmt = build(Camera).order_by(Camera.name, Camera.id).limit(limit).offset(offset)
     return (await session.execute(stmt)).scalars().all()
+
+
+@router.get("/{camera_id}", response_model=CameraOut)
+async def get_camera(
+    camera_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
+):
+    return await _camera_or_404(session, user, camera_id)
 
 
 @router.post("", response_model=CameraOut, status_code=201)
@@ -39,7 +78,15 @@ async def create_camera(
     session: AsyncSession = Depends(get_session),
     admin: CurrentUser = Depends(require_admin),
 ):
-    """Solo el admin da de alta camaras y asigna su dueño (`owner_user_id`)."""
+    """Solo el admin da de alta camaras y asigna su dueño (`owner_user_id`).
+
+    El dueño y el `robot_code` se comprueban en robotics-backend: deben existir (422 si no) y, si no se puede
+    consultar el backend, se rechaza con 503 en vez de guardar sin validar.
+    """
+    if body.owner_user_id is not None:
+        await ensure_product_user(admin, body.owner_user_id)
+    if body.robot_code is not None:
+        await ensure_robot(admin, body.robot_code)
     camera = Camera(**body.model_dump())
     session.add(camera)
     try:
@@ -71,12 +118,33 @@ async def update_camera(
     duration = changes.get("ingest_duration_s", camera.ingest_duration_s)
     if interval < duration:
         raise HTTPException(422, "ingest_interval_s no puede ser menor que ingest_duration_s")
+    if changes.get("owner_user_id") not in (None, camera.owner_user_id):
+        await ensure_product_user(admin, changes["owner_user_id"])
+    if changes.get("robot_code") not in (None, camera.robot_code):
+        await ensure_robot(admin, changes["robot_code"])
     for field, value in changes.items():
         setattr(camera, field, value)
     audit.record(session, admin, "camera.update", "camera", camera.id, request,
                  {k: str(v) for k, v in changes.items()})
     await session.commit()
     return camera
+
+
+@router.delete("/{camera_id}", status_code=204)
+async def delete_camera(
+    camera_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    admin: CurrentUser = Depends(require_admin),
+):
+    """Elimina un robot que nunca proceso nada. Con historial hay que desactivarlo (`PATCH enabled=false`)."""
+    camera = await _camera_or_404(session, admin, camera_id)
+    if await session.scalar(select(Clip.id).where(Clip.camera_id == camera.id).limit(1)) is not None:
+        raise HTTPException(409, "El robot tiene historial; desactivalo en lugar de eliminarlo")
+    audit.record(session, admin, "camera.delete", "camera", camera.id, request,
+                 {"name": camera.name, "stream_name": camera.stream_name})
+    await session.delete(camera)
+    await session.commit()
 
 
 @router.get("/{camera_id}/detectors", response_model=list[CameraDetectorOut])

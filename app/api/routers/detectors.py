@@ -7,10 +7,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import audit
 from app.auth.backend import CurrentUser
 from app.auth.deps import get_current_user, require_admin
+from app.auth.directory import ensure_product_user
 from app.db.models import Detection, Detector, DetectorAccess
 from app.db.session import get_session
 from app.detectors import health
-from app.schemas.api import AccessIn, AccessOut, DetectorIn, DetectorOut, DetectorPatch, DetectorSummary
+from app.detectors.adapters import ADAPTERS
+from app.schemas.api import (
+    AccessIn,
+    AccessOut,
+    AdapterOut,
+    DetectorIn,
+    DetectorOut,
+    DetectorPatch,
+    DetectorSummary,
+)
 
 router = APIRouter(prefix="/detectors", tags=["detectors"])
 
@@ -51,7 +61,17 @@ async def list_detectors(session: AsyncSession = Depends(get_session), _: Curren
     return (await session.execute(select(Detector).order_by(Detector.name))).scalars().all()
 
 
-# Debe ir antes de /{detector_id}
+# Estas rutas fijas deben ir antes de /{detector_id}
+@router.get("/adapters", response_model=list[AdapterOut])
+async def list_adapters(_: CurrentUser = Depends(require_admin)):
+    """Tipos de servicio que el orquestador sabe leer: el valor de `adapter` al registrar un servicio."""
+    return [
+        AdapterOut(name=name, description=a.description, analyze_path=a.path, health_path=a.health_path,
+                   has_health=a.health_path is not None)
+        for name, a in sorted(ADAPTERS.items())
+    ]
+
+
 @router.get("/available", response_model=list[DetectorSummary])
 async def available_detectors(
     session: AsyncSession = Depends(get_session), user: CurrentUser = Depends(get_current_user)
@@ -140,10 +160,13 @@ async def grant_access(
 ):
     """Da (o suspende, con enabled=false) el permiso de un usuario sobre un servicio.
 
-    `user_id` es el id del usuario en robotics-backend; no se comprueba que exista.
+    `user_id` es el id del usuario en robotics-backend. Al dar o reactivar el permiso se comprueba que exista, este
+    activo y use este producto (admin o cliente); suspenderlo no lo exige, para poder limpiar a un usuario ya borrado.
     """
     await _get_or_404(session, detector_id)
     enabled = body.enabled if body else True
+    if enabled:
+        await ensure_product_user(admin, user_id)
     access = await session.get(DetectorAccess, (detector_id, user_id))
     if access is None:
         access = DetectorAccess(detector_id=detector_id, user_id=user_id, enabled=enabled)
