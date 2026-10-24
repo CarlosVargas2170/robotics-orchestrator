@@ -6,6 +6,10 @@ import httpx
 from app.core.config import Settings
 
 
+class NoArchive(Exception):
+    """Flussonic no tiene archivo (DVR) del tramo pedido, p. ej. porque el robot estaba apagado."""
+
+
 class FlussonicClient:
     """Cliente minimo de Flussonic: listar streams y descargar clips del DVR."""
 
@@ -31,6 +35,10 @@ class FlussonicClient:
         dest.parent.mkdir(parents=True, exist_ok=True)
         url = self.clip_url(stream_name, started_at, duration_s)
         async with self._client.stream("GET", url) as resp:
+            if resp.status_code in (400, 404):
+                body = (await resp.aread()).decode(errors="replace")
+                if resp.status_code == 404 or "dvr" in body.lower():  # p. ej. 400 "No DVR configured"
+                    raise NoArchive(body[:200])
             resp.raise_for_status()
             with dest.open("wb") as f:
                 async for chunk in resp.aiter_bytes():

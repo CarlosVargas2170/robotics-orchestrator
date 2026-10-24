@@ -3,7 +3,8 @@
 Orquestador que consume clips de video de **Flussonic**, los envía a servicios de detección
 (objetos, rostros, animales) y expone resultados a **Robot Control Interface** por REST y WebSocket.
 
-Stack: Python 3.12, FastAPI, SQLAlchemy 2 (async) + PostgreSQL, Redis + Arq, ffmpeg.
+Stack: Python 3.12, FastAPI, SQLAlchemy 2 (async) + PostgreSQL, ffmpeg. PostgreSQL es también la cola de trabajo
+y el canal de eventos en vivo: no hace falta Redis.
 
 ## Arranque rápido (Docker)
 
@@ -19,10 +20,10 @@ API en http://localhost:8000 · docs en http://localhost:8000/docs
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
-docker compose up -d db redis
+docker compose up -d db
 alembic upgrade head
 uvicorn app.main:app --reload
-arq app.workers.tasks.WorkerSettings                # en otra terminal
+python -m app.workers                                # el worker, en otra terminal
 pytest
 ```
 
@@ -31,10 +32,10 @@ Requiere `ffmpeg` en el PATH para extraer frames.
 ## Flujo
 
 1. `POST /cameras` registra una cámara con su `stream_name` de Flussonic.
-2. `POST /clips` (`camera_id`, `started_at`, `duration_s`) crea el clip y lo encola.
+2. `POST /clips` (`camera_id`, `started_at`, `duration_s`) crea el clip, que queda `pending` en la cola.
 3. El worker descarga el clip (`/<stream>/archive-<from>-<dur>.mp4`), extrae frames a
    `FRAME_SAMPLE_FPS`, llama a los detectores en paralelo y guarda las `detections`.
-4. Cada detección se publica en Redis y llega al frontend por `WS /ws/events`.
+4. Cada detección se publica con `NOTIFY` de PostgreSQL y llega al frontend por `WS /ws/events`.
 
 ## Contrato de los servicios de detección
 
@@ -53,7 +54,9 @@ app/api/        routers REST + WebSocket
 app/ingest/     cliente Flussonic
 app/pipeline/   extracción de frames y orquestación del clip
 app/detectors/  adaptadores de servicios de IA
-app/workers/    tareas Arq
+app/workers/    worker: consume la cola y ejecuta las tareas periódicas
+app/queue.py    cola de trabajo sobre la tabla clips
+app/events.py   eventos en vivo (LISTEN/NOTIFY)
 app/db/         modelos y sesión
 migrations/     Alembic
 ```
@@ -121,3 +124,43 @@ Flujo para dar de alta el servicio de personas:
 `base_url` solo admite `http`/`https`, sin credenciales, y rechaza direcciones de metadatos (169.254.x.x). Un
 servicio con detecciones guardadas no se elimina (409): se deshabilita con `PATCH {"enabled": false}`.
 No se comprueba que el `user_id` de un permiso exista en robotics-backend.
+
+## Ingesta automática
+
+El worker (`python -m app.workers`) pide solo los clips a Flussonic. Cada 30 s (a los :00 y :30) revisa las
+cámaras con `auto_ingest = true` y, si toca, crea un clip (`source = SCHEDULE`) que queda en cola.
+
+Se configura por cámara con `PATCH /cameras/{id}` (solo admin):
+
+| Campo | Significado |
+|---|---|
+| `auto_ingest` | Activa la ingesta automática (por defecto `false`) |
+| `ingest_duration_s` | Segundos de video de cada tramo (5 a 300, por defecto 30) |
+| `ingest_interval_s` | Cada cuántos segundos se pide un tramo (no puede ser menor que la duración) |
+
+`interval == duration` da cobertura continua; `interval > duration` es muestreo (p. ej. 15 s de cada minuto).
+Solo se piden tramos con `INGEST_LAG_S` (20 s) de antigüedad, y tras una caída larga no se recupera más de
+`INGEST_MAX_BACKLOG_S` (300 s) de atraso. Una cámara sin servicios activos no descarga video.
+
+- **Orden por cámara:** los clips de una cámara se procesan de uno en uno y en orden; si hay uno anterior sin
+  terminar, el siguiente espera (un clip atascado más de 10 min no bloquea).
+- **Sin archivo:** si Flussonic no tiene el tramo (p. ej. robot apagado) el clip queda en `no_data`, no en `failed`.
+- **Videos:** se borran al procesarse, salvo los que tienen una alerta confirmada (evidencia) o si
+  `KEEP_CLIPS=true`. Cada noche (03:00) se borran los que superan `CLIP_RETENTION_DAYS` (30); los registros se conservan.
+
+## Cola de trabajo sobre PostgreSQL
+
+No hay un servicio de cola aparte: la tabla `clips` es la cola y un clip `pending` es un trabajo en espera.
+
+- Cada worker tiene `WORKER_CONCURRENCY` (4) consumidores. Toman clips con `FOR UPDATE SKIP LOCKED`, así que
+  se pueden lanzar varios procesos worker sin que dos tomen el mismo clip.
+- Al crearse un clip se avisa con `NOTIFY`; si el aviso se pierde, cada `WORKER_POLL_INTERVAL_S` (2 s) se consulta igual.
+- Cada intento incrementa `clips.attempts`. Si un worker cae a mitad (el clip lleva `CLIP_STALE_S`, 600 s, sin
+  avanzar) el clip se reencola, y tras `MAX_ATTEMPTS` (3) intentos pasa a `failed`.
+- Al apagar el worker (Ctrl+C o `SIGTERM`) termina los clips en curso, esperando hasta `WORKER_SHUTDOWN_S` (60 s).
+- Los eventos en vivo usan `LISTEN/NOTIFY`, que necesita conexión **directa** a PostgreSQL (no a través de
+  pgbouncer ni de un pooler en modo transacción). Son efímeros: quien no está conectado no los recibe, pero los
+  datos siempre están en `GET /detections`. Cada evento admite hasta 8 KB.
+
+**Usar Redis más adelante:** la cola y los eventos están aislados en `app/queue.py` y `app/events.py`. Pasar a
+Redis significa implementar esas dos piezas (y el arranque del worker) con Redis; el resto del sistema no cambia.

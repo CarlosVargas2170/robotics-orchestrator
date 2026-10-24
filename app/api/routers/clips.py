@@ -1,17 +1,16 @@
 import uuid
 
-from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import audit
-from app.api.deps import get_queue
 from app.auth.access import get_visible_camera
 from app.auth.backend import CurrentUser
 from app.auth.deps import get_current_user
 from app.db.models import Camera, Clip
 from app.db.session import get_session
+from app.queue import notify_new_work
 from app.schemas.api import ClipIn, ClipOut
 
 router = APIRouter(prefix="/clips", tags=["clips"])
@@ -22,10 +21,9 @@ async def request_clip(
     body: ClipIn,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    queue: ArqRedis = Depends(get_queue),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Registra un clip de Flussonic de una camara del usuario y lo encola para su procesamiento."""
+    """Registra un clip de Flussonic de una camara del usuario; queda en cola (pending) hasta que un worker lo tome."""
     if await get_visible_camera(session, user, body.camera_id) is None:
         raise HTTPException(404, "Camara no encontrada")
     clip = Clip(**body.model_dump(), requested_by=user.id)
@@ -33,7 +31,7 @@ async def request_clip(
     await session.flush()
     audit.record(session, user, "clip.request", "clip", clip.id, request, {"camera_id": str(body.camera_id)})
     await session.commit()
-    await queue.enqueue_job("process_clip_job", str(clip.id))
+    await notify_new_work(session)
     return clip
 
 

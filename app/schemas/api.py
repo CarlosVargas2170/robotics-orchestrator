@@ -16,6 +16,16 @@ class CameraIn(BaseModel):
     merchant_id: int | None = None
     location: str | None = None
     enabled: bool = True
+    # Ingesta automatica: un tramo de `ingest_duration_s` cada `ingest_interval_s` (igual = cobertura continua)
+    auto_ingest: bool = False
+    ingest_interval_s: int = Field(default=30, ge=5, le=3600)
+    ingest_duration_s: int = Field(default=30, ge=5, le=300)
+
+    @model_validator(mode="after")
+    def _interval_not_shorter_than_duration(self) -> "CameraIn":
+        if self.ingest_interval_s < self.ingest_duration_s:
+            raise ValueError("ingest_interval_s no puede ser menor que ingest_duration_s (los tramos se solaparian)")
+        return self
 
 
 class CameraOut(CameraIn):
@@ -156,6 +166,9 @@ class CameraPatch(BaseModel):
     merchant_id: int | None = None
     location: str | None = None
     enabled: bool | None = None
+    auto_ingest: bool | None = None
+    ingest_interval_s: int | None = Field(default=None, ge=5, le=3600)
+    ingest_duration_s: int | None = Field(default=None, ge=5, le=300)
 
 
 class CameraDetectorIn(BaseModel):

@@ -21,6 +21,7 @@ from sqlalchemy import (
     Uuid,
     false,
     func,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -37,6 +38,7 @@ class ClipStatus(enum.StrEnum):
     PROCESSING = "processing"
     DONE = "done"
     FAILED = "failed"
+    NO_DATA = "no_data"  # Flussonic no tiene archivo de ese tramo (p. ej. el robot estaba apagado)
 
 
 class ClipSource(enum.StrEnum):
@@ -65,6 +67,11 @@ class Camera(TimestampMixin, Base):
     merchant_id: Mapped[int | None] = mapped_column(Integer)  # merchants.merchant_id
     location: Mapped[str | None] = mapped_column(String(120))
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=true())
+    # Ingesta automatica: cada `ingest_interval_s` se pide un tramo de `ingest_duration_s` segundos
+    auto_ingest: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    ingest_interval_s: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    ingest_duration_s: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    last_ingest_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     clips: Mapped[list["Clip"]] = relationship(back_populates="camera")
     detector_links: Mapped[list["CameraDetector"]] = relationship(back_populates="camera")
@@ -72,7 +79,14 @@ class Camera(TimestampMixin, Base):
 
 class Clip(TimestampMixin, Base):
     __tablename__ = "clips"
-    __table_args__ = (Index("ix_clips_camera_started", "camera_id", "started_at"),)
+    __table_args__ = (
+        Index("ix_clips_camera_started", "camera_id", "started_at"),
+        # Respaldo contra pedir dos veces el mismo tramo automatico (p. ej. dos programadores a la vez)
+        Index(
+            "uq_clips_scheduled_window", "camera_id", "started_at", unique=True,
+            postgresql_where=text("source = 'SCHEDULE'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     camera_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cameras.id"))
@@ -82,6 +96,8 @@ class Clip(TimestampMixin, Base):
     status: Mapped[ClipStatus] = mapped_column(Enum(ClipStatus), default=ClipStatus.PENDING, index=True)
     source: Mapped[ClipSource] = mapped_column(Enum(ClipSource), default=ClipSource.MANUAL)
     error: Mapped[str | None] = mapped_column(String(1000))
+    # Veces que un worker lo ha tomado; si un worker cae a mitad, se reintenta hasta `max_attempts`
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # users.id de robotics-backend; nulo si lo disparo un horario o un evento
     requested_by: Mapped[uuid.UUID | None] = mapped_column(Uuid)
 

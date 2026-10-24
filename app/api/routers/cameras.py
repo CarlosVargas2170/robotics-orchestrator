@@ -64,8 +64,13 @@ async def update_camera(
     """Edita una camara o la reasigna a otro usuario (solo admin)."""
     camera = await _camera_or_404(session, admin, camera_id)
     changes = body.model_dump(exclude_unset=True)
-    if changes.get("name", "") is None or changes.get("enabled", True) is None:
-        raise HTTPException(422, "name y enabled no admiten null")
+    not_nullable = ("name", "enabled", "auto_ingest", "ingest_interval_s", "ingest_duration_s")
+    if any(f in changes and changes[f] is None for f in not_nullable):
+        raise HTTPException(422, f"Estos campos no admiten null: {', '.join(not_nullable)}")
+    interval = changes.get("ingest_interval_s", camera.ingest_interval_s)
+    duration = changes.get("ingest_duration_s", camera.ingest_duration_s)
+    if interval < duration:
+        raise HTTPException(422, "ingest_interval_s no puede ser menor que ingest_duration_s")
     for field, value in changes.items():
         setattr(camera, field, value)
     audit.record(session, admin, "camera.update", "camera", camera.id, request,

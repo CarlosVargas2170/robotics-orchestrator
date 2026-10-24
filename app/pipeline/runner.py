@@ -3,20 +3,17 @@ import json
 import logging
 from pathlib import Path
 
-from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.db.models import Clip, ClipStatus, Detection
 from app.detectors.base import Detector, FrameContext
-from app.ingest.flussonic import FlussonicClient
+from app.events import EventPublisher
+from app.ingest.flussonic import FlussonicClient, NoArchive
 from app.pipeline.alerts import AlertTracker
 from app.pipeline.frames import extract_frames
 
 log = logging.getLogger(__name__)
-
-EVENTS_CHANNEL = "detections"
-
 
 async def process_clip(
     session: AsyncSession,
@@ -24,7 +21,7 @@ async def process_clip(
     settings: Settings,
     flussonic: FlussonicClient,
     detectors: list[Detector],
-    redis: Redis,
+    events: EventPublisher,
 ) -> None:
     """Descarga el clip, extrae frames, corre los detectores en paralelo y guarda resultados.
 
@@ -49,6 +46,7 @@ async def process_clip(
         # Los servicios con tracking necesitan saber de que camara y en que instante real es cada frame
         robot_id = clip.camera.robot_code or clip.camera.stream_name
         tracker = AlertTracker()
+        has_evidence = False
         for idx, (offset_s, frame) in enumerate(frames):
             ctx = FrameContext(robot_id, clip.started_at.timestamp() + offset_s)
             results = await asyncio.gather(*(d.detect(frame, ctx) for d in detectors), return_exceptions=True)
@@ -67,14 +65,26 @@ async def process_clip(
                 ]
                 session.add_all(rows)
                 for d in rows:
-                    await _publish(redis, "detection", clip, detector=detector.name, kind=detector.kind,
+                    await _publish(events, "detection", clip, detector=detector.name, kind=detector.kind,
                                    label=d.label, confidence=d.confidence, offset_s=d.offset_s, bbox=d.bbox,
                                    track_id=d.track_id, alert=d.alert)
                 for c in tracker.observe(idx, detector, rows):
-                    await _publish(redis, "alert_confirmed", clip, detector=c.detector, alert=c.alert,
+                    has_evidence = True
+                    await _publish(events, "alert_confirmed", clip, detector=c.detector, alert=c.alert,
                                    track_id=c.track_id, frames=c.frames, first_offset_s=c.first_offset_s,
                                    offset_s=c.offset_s, confidence=c.max_confidence)
+            # Las detecciones quedan guardadas antes de que el frontend las consulte tras recibir el evento
+            await session.commit()
         clip.status = ClipStatus.DONE
+        if has_evidence or settings.keep_clips:
+            pass  # el video con una alerta confirmada se conserva como evidencia hasta la limpieza periodica
+        else:
+            dest.unlink(missing_ok=True)  # sin alertas no hay motivo para guardar ~4 MB por clip
+            clip.path = None
+    except NoArchive:
+        log.info("clip %s: Flussonic no tiene archivo de ese tramo", clip.id)
+        clip.status = ClipStatus.NO_DATA
+        clip.error = "Sin archivo en Flussonic para ese tramo"
     except Exception as exc:
         log.exception("clip %s fallo", clip.id)
         clip.status = ClipStatus.FAILED
@@ -82,8 +92,8 @@ async def process_clip(
     await session.commit()
 
 
-async def _publish(redis: Redis, event_type: str, clip: Clip, **fields) -> None:
+async def _publish(events: EventPublisher, event_type: str, clip: Clip, **fields) -> None:
     """Evento para Robot Control Interface: `detection` por cada deteccion y `alert_confirmed` una vez por alerta."""
-    await redis.publish(EVENTS_CHANNEL, json.dumps({
+    await events.publish(json.dumps({
         "type": event_type, "clip_id": str(clip.id), "camera_id": str(clip.camera_id), **fields,
     }))

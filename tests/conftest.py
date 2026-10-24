@@ -27,23 +27,21 @@ async def api(session, monkeypatch):
     import respx
     from httpx import ASGITransport
 
-    from app.api.deps import get_queue
     from app.auth import backend
     from app.db.session import get_session
     from app.main import app
-    from tests.helpers import BACKEND_USERS, FakeQueue
+    from tests.helpers import BACKEND_USERS
 
     monkeypatch.setenv("ROBOTICS_BACKEND_URL", "http://backend.test")
     get_settings.cache_clear()
     backend._client = None
 
-    queue, state = FakeQueue(), {"down": False, "calls": 0}
+    state = {"down": False, "calls": 0}
 
     async def _session():
         yield session
 
     app.dependency_overrides[get_session] = _session
-    app.dependency_overrides[get_queue] = lambda: queue
 
     def me(request):
         state["calls"] += 1
@@ -55,7 +53,7 @@ async def api(session, monkeypatch):
     with respx.mock(assert_all_called=False) as mock:
         mock.get("http://backend.test/api/auth/me").mock(side_effect=me)
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://orq") as client:
-            client.queue, client.state, client.mock = queue, state, mock
+            client.state, client.mock = state, mock
             yield client
 
     app.dependency_overrides.clear()
