@@ -23,6 +23,8 @@ class FrameContext:
 
     robot_id: str
     timestamp: float  # epoch en segundos del instante real del frame
+    camera_id: str | None = None  # cameras.id: distingue varias camaras de un mismo robot
+    client_id: str | None = None  # cameras.owner_user_id (users.id de robotics-backend); nulo si no tiene dueño
 
 
 class Detector(Protocol):

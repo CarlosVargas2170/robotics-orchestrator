@@ -18,8 +18,14 @@ class Adapter:
     description: str = ""  # para el catalogo que ve el admin al registrar un servicio
 
 
+def _origin_fields(ctx: FrameContext) -> dict[str, str]:
+    """Campos de origen del frame; los nulos se omiten porque httpx no acepta None en un form."""
+    fields = {"camera_id": ctx.camera_id, "client_id": ctx.client_id}
+    return {k: v for k, v in fields.items() if v}
+
+
 def _generic_request(frame: bytes, ctx: FrameContext) -> dict:
-    return {"files": {"image": ("frame.jpg", frame, "image/jpeg")}}
+    return {"files": {"image": ("frame.jpg", frame, "image/jpeg")}, "data": _origin_fields(ctx)}
 
 
 def _generic_parse(body: dict) -> list[DetectionResult]:
@@ -30,7 +36,7 @@ def _generic_parse(body: dict) -> list[DetectionResult]:
 def _person_request(frame: bytes, ctx: FrameContext) -> dict:
     return {
         "files": {"file": ("frame.jpg", frame, "image/jpeg")},
-        "data": {"robot_id": ctx.robot_id, "timestamp": str(ctx.timestamp)},
+        "data": {"robot_id": ctx.robot_id, "timestamp": str(ctx.timestamp), **_origin_fields(ctx)},
     }
 
 
