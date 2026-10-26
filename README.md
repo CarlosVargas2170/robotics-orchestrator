@@ -9,7 +9,7 @@ y el canal de eventos en vivo: no hace falta Redis.
 ## Arranque rápido (Docker)
 
 ```bash
-cp .env.example .env      # ajusta FLUSSONIC_URL y las URLs de los detectores
+cp .env.example .env      # ajusta FLUSSONIC_URL; los servicios de IA se registran después por API
 docker compose up --build
 ```
 
@@ -39,13 +39,46 @@ Requiere `ffmpeg` en el PATH para extraer frames.
 
 ## Contrato de los servicios de detección
 
-`POST {URL}/detect` (multipart, campo `image` JPEG) →
+Cada servicio se registra con un **adaptador** (`adapter`, ver «Gestión de servicios de IA») que define cómo se le
+habla y cómo se normaliza su respuesta (`app/detectors/adapters.py`). Todas las peticiones son `multipart/form-data`
+con un frame JPEG. Los adaptadores disponibles se listan en `GET /detectors/adapters`.
 
-```json
-{"detections": [{"label": "person", "confidence": 0.93, "bbox": [x, y, w, h]}]}
+**Origen del frame.** Todo adaptador envía, cuando se conocen, estos campos de formulario (texto):
+
+| Campo | Valor | Si falta |
+|---|---|---|
+| `camera_id` | `cameras.id` (UUID de la cámara en el orquestador). Distingue varias cámaras de un mismo robot | nunca falta |
+| `client_id` | `cameras.owner_user_id` (`users.id` del cliente en robotics-backend) | se **omite** si la cámara no tiene dueño |
+
+Un servicio debe tratarlos como opcionales; si no los declara, los ignora sin error.
+
+**`generic`** — `POST {URL}/detect`
+
+```
+image     = frame.jpg (image/jpeg)
+camera_id = <uuid>
+client_id = <uuid>            (opcional)
 ```
 
-`bbox` normalizado 0..1 y opcional. Un detector se activa al definir su `DETECTOR_*_URL`.
+```json
+{"detections": [{"label": "person", "confidence": 0.93, "bbox": [x1, y1, x2, y2]}]}
+```
+
+`bbox` es opcional y va en píxeles del frame. Sin chequeo de salud.
+
+**`person_detection_v1`** (Servicio 1, v2.1.0) — `POST {URL}/api/v1/analyze/frame`, salud en `GET {URL}/api/v1/health`
+
+```
+file      = frame.jpg (image/jpeg)
+robot_id  = <robot_code de la cámara, o su stream_name si no tiene>
+timestamp = <epoch en segundos del instante real del frame>
+camera_id = <uuid>
+client_id = <uuid>            (opcional)
+```
+
+Responde `detected`, `persons_count` y `detections[]` (`confidence`, `bbox {x1,y1,x2,y2}`, `track_id`, `alert`),
+más `last_incident_evidence` si el servicio grabó un clip. Con `detected = false` no hay detecciones.
+`robot_id` y `timestamp` son los que usa el servicio para su seguimiento (tracking) sin mezclar cámaras.
 
 ## Estructura
 

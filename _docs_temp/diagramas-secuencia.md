@@ -460,7 +460,7 @@ sequenceDiagram
     R->>AT: new AlertTracker()
 
     loop por cada frame (idx, offset_s)
-        R->>R: ctx = FrameContext(robot_code o stream, started_at + offset_s)
+        R->>R: ctx = FrameContext(robot_code o stream, started_at + offset_s, camera_id, client_id = owner_user_id o None)
         par en paralelo a cada servicio
             R->>IA: detect(frame, ctx) ver diagrama 10
             IA-->>R: [DetectionResult] o excepción
@@ -520,10 +520,11 @@ sequenceDiagram
     Note over Sem: espera si ya hay max_concurrency<br/>peticiones en curso a este servicio
     HD->>Ad: build_request(frame, ctx)
     alt adapter generic
-        Ad-->>HD: files image = frame.jpg
+        Ad-->>HD: files image = frame.jpg + data camera_id, client_id
     else adapter person_detection_v1
-        Ad-->>HD: files file = frame.jpg + data robot_id, timestamp
+        Ad-->>HD: files file = frame.jpg + data robot_id, timestamp, camera_id, client_id
     end
+    Note over Ad,HD: client_id se omite si la cámara no tiene dueño
     HD->>IA: POST base_url + path (/detect o /api/v1/analyze/frame)
     IA-->>HD: JSON
     HD->>Sem: release
