@@ -58,6 +58,34 @@ async def test_person_adapter_sends_frame_with_camera_context():
 
 
 @respx.mock
+async def test_adapters_send_camera_and_client_when_known():
+    ctx = FrameContext("SERBOT01", 1729742400.15, camera_id="cam-uuid-1", client_id="client-uuid-1")
+    person = respx.post("http://person:8001/api/v1/analyze/frame").mock(
+        return_value=httpx.Response(200, json=PERSON_WALKING))
+    generic = respx.post("http://det:9000/detect").mock(return_value=httpx.Response(200, json={"detections": []}))
+
+    await HttpDetector("personas", "http://person:8001", 5, adapter="person_detection_v1").detect(b"jpeg", ctx)
+    await HttpDetector("animals", "http://det:9000", 5).detect(b"jpeg", ctx)
+
+    for route in (person, generic):
+        body = route.calls.last.request.content
+        assert b'name="camera_id"' in body and b"cam-uuid-1" in body
+        assert b'name="client_id"' in body and b"client-uuid-1" in body
+
+
+@respx.mock
+async def test_adapters_omit_client_without_owner():
+    route = respx.post("http://person:8001/api/v1/analyze/frame").mock(
+        return_value=httpx.Response(200, json=PERSON_WALKING))
+    ctx = FrameContext("SERBOT01", 1729742400.15, camera_id="cam-uuid-1")  # camara sin dueño
+    await HttpDetector("personas", "http://person:8001", 5, adapter="person_detection_v1").detect(b"jpeg", ctx)
+
+    body = route.calls.last.request.content
+    assert b'name="camera_id"' in body
+    assert b'name="client_id"' not in body
+
+
+@respx.mock
 async def test_person_adapter_keeps_alert_and_incident_evidence():
     respx.post("http://person:8001/api/v1/analyze/frame").mock(
         return_value=httpx.Response(200, json=PERSON_FALLEN)

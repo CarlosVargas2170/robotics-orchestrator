@@ -54,10 +54,12 @@ async def process_clip(
 
         # Los servicios con tracking necesitan saber de que camara y en que instante real es cada frame
         robot_id = clip.camera.robot_code or clip.camera.stream_name
+        camera_id = str(clip.camera_id)
+        client_id = str(clip.camera.owner_user_id) if clip.camera.owner_user_id else None
         tracker = AlertTracker()
         has_evidence = False
         for idx, (offset_s, frame) in enumerate(frames):
-            ctx = FrameContext(robot_id, clip.started_at.timestamp() + offset_s)
+            ctx = FrameContext(robot_id, clip.started_at.timestamp() + offset_s, camera_id, client_id)
             results = await asyncio.gather(*(d.detect(frame, ctx) for d in detectors), return_exceptions=True)
             pending_events: list[tuple[str, dict]] = []
             for detector, res in zip(detectors, results, strict=True):
