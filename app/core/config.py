@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     frame_sample_fps: float = 1.0
 
-    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000", "http://localhost:5173"])
 
     @field_validator("cors_origins", mode="before")
     @classmethod
